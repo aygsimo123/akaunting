@@ -1,12 +1,12 @@
 pipeline {
   agent any
 
-  options {
+    options {
     timestamps()
     disableConcurrentBuilds()
-  }
+    }
 
-  environment {
+    environment {
     // CI mode
     APP_ENV = "testing"
     APP_DEBUG = "false"
@@ -32,7 +32,7 @@ pipeline {
     stage('Install dependencies') {
       steps {
         // PHP deps
-        bat 'composer install --no-interaction --prefer-dist --no-progress'
+        bat 'composer install --no-interaction --prefer-dist --no-progress ^ --ignore-platform-req=ext-intl --ignore-platform-req=ext-gd --ignore-platform-req=ext-zip'
         // JS deps
         bat 'npm ci'
       }
