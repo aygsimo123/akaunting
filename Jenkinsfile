@@ -32,7 +32,7 @@ pipeline {
     stage('Install dependencies') {
       steps {
         // PHP deps
-        bat 'composer install --no-interaction --prefer-dist --no-progress ^ --ignore-platform-req=ext-intl --ignore-platform-req=ext-gd --ignore-platform-req=ext-zip'
+        bat 'composer install --no-interaction --prefer-dist --no-progress'
         // JS deps
         bat 'npm ci'
       }
