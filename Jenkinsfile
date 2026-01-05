@@ -1,14 +1,9 @@
 pipeline {
     agent any
     stages {
-        stage('Test PHP') {
+        stage('Install deps') {
         steps {
-            bat 'php -v'
-        }
-        }
-        stage('Test Composer') {
-        steps {
-            bat 'composer -V'
+            bat 'composer install --no-interaction'
         }
         }
     }
