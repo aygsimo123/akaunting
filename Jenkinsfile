@@ -52,7 +52,7 @@ pipeline {
       steps {
         // Selon le projet ça peut être dev/build, ici on fait build
         // Si ça échoue, remplace par: npm run dev
-        bat 'npm run build'
+        bat 'npm run dev'
       }
     }
 
