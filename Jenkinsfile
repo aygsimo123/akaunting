@@ -15,7 +15,7 @@
 
         stage('Dependances PHP (Composer)') {
         steps {
-            // ✅ Ecriture .cmd SANS indentation + CRLF Windows + debug (type)
+            // ✅ Ultra fiable: écrire un .cmd puis l'exécuter (avec CALL pour composer)
             writeFile file: 'composer-install.cmd', text: (
             "@echo on\r\n" +
             "setlocal EnableExtensions\r\n" +
@@ -25,21 +25,21 @@
             "where php\r\n" +
             "where composer\r\n" +
             "php -v\r\n" +
-            "composer -V\r\n" +
+            "call composer -V\r\n" +   // ✅ IMPORTANT: CALL
             "\r\n" +
             "echo ===== COMPOSER CACHE DIR =====\r\n" +
             "if not exist \"%COMPOSER_CACHE_DIR%\" mkdir \"%COMPOSER_CACHE_DIR%\"\r\n" +
             "\r\n" +
             "echo ===== RUN COMPOSER INSTALL =====\r\n" +
-            "composer install --no-interaction --prefer-dist --no-progress\r\n" +
-            "echo COMPOSER_EXIT=%ERRORLEVEL%\r\n" +
-            "if errorlevel 1 exit /b 1\r\n" +
+            "call composer install --no-interaction --prefer-dist --no-progress\r\n" + // ✅ CALL
+            "set COMPOSER_EXIT=%ERRORLEVEL%\r\n" +
+            "echo COMPOSER_EXIT=%COMPOSER_EXIT%\r\n" +
+            "if not \"%COMPOSER_EXIT%\"==\"0\" exit /b %COMPOSER_EXIT%\r\n" +
             "\r\n" +
             "echo ===== CHECK VENDOR =====\r\n" +
-            "dir\r\n" +
-            "if exist vendor dir vendor\r\n" +
             "if not exist \"vendor\\autoload.php\" (\r\n" +
             "  echo ERROR: vendor\\autoload.php introuvable apres composer install\r\n" +
+            "  dir\r\n" +
             "  exit /b 1\r\n" +
             ")\r\n" +
             "echo ===== OK (vendor present) =====\r\n" +
@@ -59,9 +59,10 @@
 
         stage('Securite (SCA)') {
         steps {
+            // ✅ CALL aussi ici (par sécurité)
             bat '''
     @echo on
-    composer audit
+    call composer audit
     if errorlevel 1 exit /b 1
     '''
         }
@@ -70,17 +71,18 @@
         stage('Securite (npm) - optionnel') {
         when { expression { fileExists('package-lock.json') } }
         steps {
+            // (optionnel) call npm pour éviter le même souci
             bat '''
     @echo on
     node -v
     npm -v
 
     echo ===== NPM CI =====
-    npm ci
+    call npm ci
     if errorlevel 1 exit /b 1
 
     echo ===== NPM AUDIT (high+) =====
-    npm audit --audit-level=high
+    call npm audit --audit-level=high
     if errorlevel 1 exit /b 1
     '''
         }
@@ -135,7 +137,6 @@
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
     '''
-
             bat '''
     @echo on
     "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File jenkins-tests.ps1
