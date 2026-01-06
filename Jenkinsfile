@@ -15,28 +15,45 @@
 
         stage('Dependances PHP (Composer)') {
         steps {
-            // ✅ Ultra fiable: écrire un .cmd puis l'exécuter
-            writeFile file: 'composer-install.cmd', text: '''
+            // ✅ Ecriture .cmd SANS indentation + CRLF Windows + debug (type)
+            writeFile file: 'composer-install.cmd', text: (
+            "@echo on\r\n" +
+            "setlocal EnableExtensions\r\n" +
+            "cd /d \"%WORKSPACE%\"\r\n" +
+            "\r\n" +
+            "echo ===== WHERE PHP/COMPOSER =====\r\n" +
+            "where php\r\n" +
+            "where composer\r\n" +
+            "php -v\r\n" +
+            "composer -V\r\n" +
+            "\r\n" +
+            "echo ===== COMPOSER CACHE DIR =====\r\n" +
+            "if not exist \"%COMPOSER_CACHE_DIR%\" mkdir \"%COMPOSER_CACHE_DIR%\"\r\n" +
+            "\r\n" +
+            "echo ===== RUN COMPOSER INSTALL =====\r\n" +
+            "composer install --no-interaction --prefer-dist --no-progress\r\n" +
+            "echo COMPOSER_EXIT=%ERRORLEVEL%\r\n" +
+            "if errorlevel 1 exit /b 1\r\n" +
+            "\r\n" +
+            "echo ===== CHECK VENDOR =====\r\n" +
+            "dir\r\n" +
+            "if exist vendor dir vendor\r\n" +
+            "if not exist \"vendor\\autoload.php\" (\r\n" +
+            "  echo ERROR: vendor\\autoload.php introuvable apres composer install\r\n" +
+            "  exit /b 1\r\n" +
+            ")\r\n" +
+            "echo ===== OK (vendor present) =====\r\n" +
+            "endlocal\r\n"
+            )
+
+            bat '''
     @echo on
-    php -v
-    composer -V
-
-    if not exist "%COMPOSER_CACHE_DIR%" mkdir "%COMPOSER_CACHE_DIR%"
-
-    echo ===== RUN COMPOSER INSTALL =====
-    composer install --no-interaction --prefer-dist --no-progress
+    echo ===== SHOW composer-install.cmd =====
+    type composer-install.cmd
+    echo ===== RUN composer-install.cmd =====
+    call composer-install.cmd
     if errorlevel 1 exit /b 1
-
-    echo ===== CHECK VENDOR =====
-    if not exist "vendor\\autoload.php" (
-    echo ERROR: vendor\\autoload.php introuvable apres composer install
-    dir
-    exit /b 1
-    )
-
-    echo ===== OK (vendor present) =====
     '''
-            bat 'call composer-install.cmd'
         }
         }
 
@@ -53,7 +70,6 @@
         stage('Securite (npm) - optionnel') {
         when { expression { fileExists('package-lock.json') } }
         steps {
-            // ✅ Ici aussi on force l’échec si npm échoue
             bat '''
     @echo on
     node -v
@@ -72,27 +88,22 @@
 
         stage('Tests (Laravel + SQLite)') {
         steps {
-            // ✅ Script .ps1 (évite soucis Groovy avec $ErrorActionPreference)
             writeFile file: 'jenkins-tests.ps1', text: '''
     $ErrorActionPreference = "Stop"
 
-    # S'assurer que vendor existe (sinon artisan va planter)
     if (!(Test-Path "vendor\\autoload.php")) {
     Write-Host "ERROR: vendor\\autoload.php introuvable. Composer install n'a pas ete fait ou a echoue."
     exit 1
     }
 
-    # .env
     if (!(Test-Path ".env")) {
     if (Test-Path ".env.example") { Copy-Item ".env.example" ".env" }
     else { throw ".env.example introuvable" }
     }
 
-    # SQLite
     if (!(Test-Path "database")) { New-Item -ItemType Directory -Path "database" | Out-Null }
     if (!(Test-Path "database\\database.sqlite")) { New-Item -ItemType File -Path "database\\database.sqlite" | Out-Null }
 
-    # Override env (testing)
     Add-Content -Path ".env" -Value "`nAPP_ENV=testing"
     Add-Content -Path ".env" -Value "APP_DEBUG=false"
     Add-Content -Path ".env" -Value "DB_CONNECTION=sqlite"
@@ -102,7 +113,6 @@
     Add-Content -Path ".env" -Value "QUEUE_CONNECTION=sync"
     Add-Content -Path ".env" -Value "MAIL_MAILER=log"
 
-    # Artisan + checks exit code
     php artisan key:generate --force
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -112,14 +122,11 @@
     php artisan cache:clear
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    # Migrations
     php artisan migrate --force --no-interaction
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    # Reports dir
     if (!(Test-Path "build\\reports")) { New-Item -ItemType Directory -Path "build\\reports" | Out-Null }
 
-    # PHPUnit / artisan test
     if (Test-Path "vendor\\bin\\phpunit.bat") {
     cmd /c "vendor\\bin\\phpunit.bat --log-junit build\\reports\\junit.xml"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -129,7 +136,6 @@
     }
     '''
 
-            // ✅ Appel PowerShell par chemin complet (fiable en service)
             bat '''
     @echo on
     "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File jenkins-tests.ps1
@@ -146,10 +152,8 @@
             junit testResults: 'build/reports/junit.xml', allowEmptyResults: true
             }
         }
-
         archiveArtifacts artifacts: 'build/reports/**', allowEmptyArchive: true
         archiveArtifacts artifacts: 'storage/logs/*.log', allowEmptyArchive: true
-
         cleanWs()
         }
     }
