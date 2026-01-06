@@ -1,109 +1,64 @@
-    pipeline {
+pipeline {
     agent any
 
-    environment {
-        APP_ENV = "testing"
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '30'))
     }
 
     stages {
-
         stage('Checkout') {
-        steps {
-            git url: 'https://github.com/aygsimo123/akaunting.git', branch: 'master'
+        steps { checkout scm }
+        }
+
+        stage('Fail-fast security checks') {
+            parallel {
+                stage('Secrets - Gitleaks') {
+                steps {
+                    sh '''
+                    mkdir -p build/gitleaks
+                    gitleaks detect --source . --report-format json --report-path build/gitleaks/report.json
+                    '''
+                }
+                }
+
+                stage('SAST - Semgrep') {
+                steps {
+                    sh '''
+                    mkdir -p build/semgrep
+                    semgrep scan --config p/default --json -o build/semgrep/semgrep.json .
+                    '''
+                }
+                }
+
+                stage('SCA - Composer audit') {
+                steps {
+                    sh '''
+                    mkdir -p build/sca
+                    composer install --no-interaction --prefer-dist
+                    composer audit --format=json > build/sca/composer-audit.json
+                    '''
+                }
+                }
+
+                stage('SCA - npm audit') {
+                steps {
+                    sh '''
+                    mkdir -p build/sca
+                    npm ci || npm install
+                    npm audit --json > build/sca/npm-audit.json || true
+                    '''
+                }
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'build/**', allowEmptyArchive: true
+                    cleanWs()
+                }
+            }
+            }
         }
         }
 
-        stage('Prepare Environment') {
-        steps {
-            sh '''
-            php -v
-            node -v
-            composer --version
-            npm -v
-            '''
-        }
-        }
-
-        stage('Install Backend Dependencies') {
-        steps {
-            sh '''
-            composer install \
-                --no-interaction \
-                --prefer-dist \
-                --optimize-autoloader
-            '''
-        }
-        }
-
-        stage('Install Frontend Dependencies') {
-        steps {
-            sh '''
-            npm ci
-            '''
-        }
-        }
-
-        stage('Static Code Analysis') {
-        steps {
-            sh '''
-            vendor/bin/pint --test || true
-            vendor/bin/phpstan analyse --memory-limit=1G || true
-            '''
-        }
-        }
-
-        stage('Unit Tests') {
-        steps {
-            sh '''
-            cp .env.example .env || true
-            php artisan key:generate || true
-            vendor/bin/phpunit
-            '''
-        }
-        }
-
-        stage('Security Scan (SCA)') {
-        steps {
-            sh '''
-            composer audit || true
-            '''
-        }
-        }
-
-        stage('Build Frontend Assets') {
-        steps {
-            sh '''
-            npm run build || npm run prod
-            '''
-        }
-        }
-
-        stage('Package Artifact') {
-        steps {
-            sh '''
-            tar -czf akaunting-build.tar.gz .
-            '''
-        }
-        }
-
-        stage('Deploy (optional)') {
-        when {
-            branch 'main'
-        }
-        steps {
-            echo "🚀 Déploiement manuel / SCP / rsync"
-        }
-        }
-    }
-
-    post {
-        always {
-        cleanWs()
-        echo "✅ Pipeline terminée sans Docker"
-        }
-
-        failure {
-        echo "❌ Erreur détectée – vérifier les logs Jenkins"
-        }
-    }
-    }
