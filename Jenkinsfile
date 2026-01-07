@@ -76,7 +76,7 @@
         }
         }
 
-        stage('Securite (npm) - optionnel') {
+        stage('Securite (npm)') {
         when { expression { fileExists('package-lock.json') } }
         steps {
             // ✅ On observe + on collecte, mais on ne bloque pas.
