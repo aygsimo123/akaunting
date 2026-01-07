@@ -6,16 +6,19 @@
     environment {
         COMPOSER_NO_INTERACTION = "1"
         COMPOSER_CACHE_DIR      = "${WORKSPACE}\\.composer-cache"
+
+        // ✅ Forcer Python Windows (éviter MSYS2)
+        PY312 = "C:\\Program Files\\Python312\\python.exe"
     }
 
     stages {
+
         stage('Checkout') {
         steps { checkout scm }
         }
 
         stage('Dependances PHP (Composer)') {
         steps {
-            // ✅ Ultra fiable: écrire un .cmd puis l'exécuter (avec CALL pour composer)
             writeFile file: 'composer-install.cmd', text: (
             "@echo on\r\n" +
             "setlocal EnableExtensions\r\n" +
@@ -47,59 +50,86 @@
             )
 
             bat '''
-    @echo on
-    echo ===== SHOW composer-install.cmd =====
-    type composer-install.cmd
-    echo ===== RUN composer-install.cmd =====
-    call composer-install.cmd
-    if errorlevel 1 exit /b 1
-    '''
+            @echo on
+            echo ===== SHOW composer-install.cmd =====
+            type composer-install.cmd
+            echo ===== RUN composer-install.cmd =====
+            call composer-install.cmd
+            if errorlevel 1 exit /b 1
+            '''
+        }
+        }
+
+        // ✅ SAST (Semgrep) - non bloquant + Python forcé
+        stage('SAST (Semgrep)') {
+        steps {
+            bat """
+            @echo on
+            echo ===== PYTHON CHECK (FORCED PATH) =====
+            "${env.PY312}" --version
+            "${env.PY312}" -m pip --version
+
+            echo ===== INSTALL/UPDATE SEMGREP =====
+            "${env.PY312}" -m pip install --quiet --upgrade semgrep
+
+            echo ===== RUN SEMGREP (non-bloquant) =====
+            "${env.PY312}" -m semgrep --version
+
+            REM JSON report (utile)
+            "${env.PY312}" -m semgrep --config=auto --json > semgrep-report.json
+            set SEMGREP_EXIT=%ERRORLEVEL%
+
+            REM Sortie texte (simple à lire)
+            "${env.PY312}" -m semgrep --config=auto > semgrep-report.txt
+            set SEMGREP_EXIT2=%ERRORLEVEL%
+
+            echo SEMGREP_EXIT=%SEMGREP_EXIT%
+            echo SEMGREP_EXIT2=%SEMGREP_EXIT2%
+
+            REM Toujours réussir ce stage
+            exit /b 0
+            """
         }
         }
 
         stage('Securite (SCA)') {
         steps {
-            // ✅ On observe + on collecte, mais on ne bloque pas.
-            //    On force le succès même si composer audit retourne 1.
             bat '''
-    @echo on
-    echo ===== COMPOSER AUDIT (non-bloquant) =====
-    call composer audit > composer-audit.txt
-    set AUDIT_EXIT=%ERRORLEVEL%
+            @echo on
+            echo ===== COMPOSER AUDIT (non-bloquant) =====
+            call composer audit > composer-audit.txt
+            set AUDIT_EXIT=%ERRORLEVEL%
 
-    type composer-audit.txt
-    echo COMPOSER_AUDIT_EXIT=%AUDIT_EXIT%
+            type composer-audit.txt
+            echo COMPOSER_AUDIT_EXIT=%AUDIT_EXIT%
 
-    REM Toujours réussir ce stage
-    exit /b 0
-    '''
+            exit /b 0
+            '''
         }
         }
 
         stage('Securite (npm)') {
         when { expression { fileExists('package-lock.json') } }
         steps {
-            // ✅ On observe + on collecte, mais on ne bloque pas.
             bat '''
-    @echo on
-    node -v
-    npm -v
+            @echo on
+            node -v
+            npm -v
 
-    echo ===== NPM CI (non-bloquant) =====
-    call npm ci > npm-ci.txt
-    set NPM_CI_EXIT=%ERRORLEVEL%
-    type npm-ci.txt
-    echo NPM_CI_EXIT=%NPM_CI_EXIT%
+            echo ===== NPM CI (non-bloquant) =====
+            call npm ci > npm-ci.txt
+            set NPM_CI_EXIT=%ERRORLEVEL%
+            type npm-ci.txt
+            echo NPM_CI_EXIT=%NPM_CI_EXIT%
 
-    echo ===== NPM AUDIT (high+) (non-bloquant) =====
-    call npm audit --audit-level=high > npm-audit.txt
-    set NPM_AUDIT_EXIT=%ERRORLEVEL%
-    type npm-audit.txt
-    echo NPM_AUDIT_EXIT=%NPM_AUDIT_EXIT%
+            echo ===== NPM AUDIT (high+) (non-bloquant) =====
+            call npm audit --audit-level=high > npm-audit.txt
+            set NPM_AUDIT_EXIT=%ERRORLEVEL%
+            type npm-audit.txt
+            echo NPM_AUDIT_EXIT=%NPM_AUDIT_EXIT%
 
-    REM Toujours réussir ce stage
-    exit /b 0
-    '''
+            exit /b 0
+            '''
         }
         }
 
@@ -153,10 +183,10 @@
     }
     '''
             bat '''
-    @echo on
-    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File jenkins-tests.ps1
-    if errorlevel 1 exit /b 1
-    '''
+            @echo on
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File jenkins-tests.ps1
+            if errorlevel 1 exit /b 1
+            '''
         }
         }
     }
@@ -169,11 +199,14 @@
             }
         }
 
-        // Rapports sécurité (si présents) + tests
+        // Tests + rapports sécurité
         archiveArtifacts artifacts: 'build/reports/**', allowEmptyArchive: true
         archiveArtifacts artifacts: 'composer-audit.txt, npm-ci.txt, npm-audit.txt', allowEmptyArchive: true
-        archiveArtifacts artifacts: 'storage/logs/*.log', allowEmptyArchive: true
 
+        // ✅ Semgrep reports
+        archiveArtifacts artifacts: 'semgrep-report.json, semgrep-report.txt', allowEmptyArchive: true
+
+        archiveArtifacts artifacts: 'storage/logs/*.log', allowEmptyArchive: true
         cleanWs()
         }
     }
