@@ -188,6 +188,52 @@
                 }
             }
 
+            // ✅ DAST (OWASP ZAP) - non-bloquant + rapports HTML (backend + frontend)
+            stage('DAST (OWASP ZAP)') {
+                steps {
+                    bat '''
+                    @echo on
+                    setlocal EnableExtensions
+                    cd /d "%WORKSPACE%"
+
+                    REM --- Ajuste ces URLs si besoin ---
+                    set BACKEND_URL=http://127.0.0.1:8000
+                    set FRONTEND_URL=http://127.0.0.1:5173
+
+                    REM --- ZAP install path ---
+                    set ZAP_HOME=C:\\Program Files\\ZAP\\Zed Attack Proxy
+                    set ZAP=%ZAP_HOME%\\zap.bat
+                    set ZAP_HOST=127.0.0.1
+                    set ZAP_PORT=8090
+
+                    echo ===== START ZAP DAEMON =====
+                    cd /d "%ZAP_HOME%"
+                    start "" /B "%ZAP%" -daemon -host %ZAP_HOST% -port %ZAP_PORT% -config api.disablekey=true
+
+                    echo ===== WAIT ZAP READY =====
+                    powershell -NoProfile -Command ^
+                    "for($i=0;$i -lt 30;$i++){try{(Invoke-WebRequest http://%ZAP_HOST%:%ZAP_PORT% -UseBasicParsing -TimeoutSec 2).StatusCode; exit 0}catch{Start-Sleep 1}}; exit 1"
+                    if errorlevel 1 (
+                    echo WARNING: ZAP not ready (non-bloquant)
+                    exit /b 0
+                    )
+
+                    echo ===== DAST BACKEND (quick scan -> HTML report) =====
+                    "%ZAP%" -cmd -quickurl "%BACKEND_URL%" -quickout "%WORKSPACE%\\zap-backend.html"
+
+                    echo ===== DAST FRONTEND (quick scan -> HTML report) =====
+                    "%ZAP%" -cmd -quickurl "%FRONTEND_URL%" -quickout "%WORKSPACE%\\zap-frontend.html"
+
+                    echo ===== STOP ZAP =====
+                    taskkill /F /IM ZAP.exe >nul 2>&1
+                    taskkill /F /IM java.exe >nul 2>&1
+
+                    echo ===== DONE (DAST non-bloquant) =====
+                    exit /b 0
+                    '''
+                }
+            }
+
             stage('Tests (Laravel + SQLite)') {
                 steps {
                     writeFile file: 'jenkins-tests.ps1', text: '''
@@ -263,6 +309,9 @@
 
                 // ✅ Semgrep reports
                 archiveArtifacts artifacts: 'semgrep-report.json, semgrep-report.txt', allowEmptyArchive: true
+
+                // ✅ DAST reports
+                archiveArtifacts artifacts: 'zap-backend.html, zap-frontend.html', allowEmptyArchive: true
 
                 archiveArtifacts artifacts: 'storage/logs/*.log', allowEmptyArchive: true
                 cleanWs()
