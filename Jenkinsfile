@@ -12,6 +12,18 @@
 
             // ✅ Semgrep exe (installé par pip dans Scripts)
             SEMGREP = "C:\\Program Files\\Python312\\Scripts\\semgrep.exe"
+
+            // ✅ PowerShell full path (évite: 'powershell' n'est pas reconnu)
+            PSH = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+
+            // ✅ ZAP path (ton installation)
+            ZAP_HOME = "C:\\Program Files\\ZAP\\Zed Attack Proxy"
+            ZAP_HOST = "127.0.0.1"
+            ZAP_PORT = "8090"
+
+            // ✅ Cibles DAST (adapte si besoin)
+            BACKEND_URL  = "http://127.0.0.1:8000"
+            FRONTEND_URL = "http://127.0.0.1:5173"
         }
 
         stages {
@@ -188,49 +200,41 @@
                 }
             }
 
-            // ✅ DAST (OWASP ZAP) - non-bloquant + rapports HTML (backend + frontend)
+            // ✅ DAST (OWASP ZAP) - corrigé (PowerShell full path) + safe (ne tue pas java.exe)
             stage('DAST (OWASP ZAP)') {
                 steps {
-                    bat '''
+                    bat """
                     @echo on
                     setlocal EnableExtensions
                     cd /d "%WORKSPACE%"
 
-                    REM --- Ajuste ces URLs si besoin ---
-                    set BACKEND_URL=http://127.0.0.1:8000
-                    set FRONTEND_URL=http://127.0.0.1:5173
-
-                    REM --- ZAP install path ---
-                    set ZAP_HOME=C:\\Program Files\\ZAP\\Zed Attack Proxy
-                    set ZAP=%ZAP_HOME%\\zap.bat
-                    set ZAP_HOST=127.0.0.1
-                    set ZAP_PORT=8090
+                    set "ZAP=${env.ZAP_HOME}\\zap.bat"
 
                     echo ===== START ZAP DAEMON =====
-                    cd /d "%ZAP_HOME%"
-                    start "" /B "%ZAP%" -daemon -host %ZAP_HOST% -port %ZAP_PORT% -config api.disablekey=true
+                    cd /d "${env.ZAP_HOME}"
+                    start "" /B "%ZAP%" -daemon -host ${env.ZAP_HOST} -port ${env.ZAP_PORT} -config api.disablekey=true
 
                     echo ===== WAIT ZAP READY =====
-                    powershell -NoProfile -Command ^
-                    "for($i=0;$i -lt 30;$i++){try{(Invoke-WebRequest http://%ZAP_HOST%:%ZAP_PORT% -UseBasicParsing -TimeoutSec 2).StatusCode; exit 0}catch{Start-Sleep 1}}; exit 1"
+                    "${env.PSH}" -NoProfile -Command ^
+                    "for(\$i=0;\$i -lt 40;\$i++){try{(Invoke-WebRequest http://${env.ZAP_HOST}:${env.ZAP_PORT} -UseBasicParsing -TimeoutSec 2).StatusCode | Out-Null; exit 0}catch{Start-Sleep 1}}; exit 1"
                     if errorlevel 1 (
-                    echo WARNING: ZAP not ready (non-bloquant)
+                    echo WARNING: ZAP not ready -> skip scan (non-bloquant)
                     exit /b 0
                     )
 
                     echo ===== DAST BACKEND (quick scan -> HTML report) =====
-                    "%ZAP%" -cmd -quickurl "%BACKEND_URL%" -quickout "%WORKSPACE%\\zap-backend.html"
+                    cd /d "${env.ZAP_HOME}"
+                    call "%ZAP%" -cmd -quickurl "${env.BACKEND_URL}" -quickout "%WORKSPACE%\\zap-backend.html"
 
                     echo ===== DAST FRONTEND (quick scan -> HTML report) =====
-                    "%ZAP%" -cmd -quickurl "%FRONTEND_URL%" -quickout "%WORKSPACE%\\zap-frontend.html"
+                    call "%ZAP%" -cmd -quickurl "${env.FRONTEND_URL}" -quickout "%WORKSPACE%\\zap-frontend.html"
 
                     echo ===== STOP ZAP =====
                     taskkill /F /IM ZAP.exe >nul 2>&1
-                    taskkill /F /IM java.exe >nul 2>&1
 
                     echo ===== DONE (DAST non-bloquant) =====
                     exit /b 0
-                    '''
+                    """
                 }
             }
 
@@ -283,12 +287,11 @@
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
     '''
-
-                    bat '''
+                    bat """
                     @echo on
-                    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File jenkins-tests.ps1
+                    "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File jenkins-tests.ps1
                     if errorlevel 1 exit /b 1
-                    '''
+                    """
                 }
             }
         }
