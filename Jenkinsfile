@@ -22,6 +22,9 @@
             // ✅ Cibles DAST (adapte si besoin)
             BACKEND_URL  = "http://127.0.0.1:8000"
             FRONTEND_URL = "http://127.0.0.1:5173"
+
+            // ✅ IMPORTANT: Jenkins utilise 8080 => ZAP doit utiliser un autre port
+            ZAP_PROXY_PORT = "18080"
         }
 
         stages {
@@ -198,7 +201,7 @@
                 }
             }
 
-            // ✅ DAST (OWASP ZAP) - version STABLE (sans daemon) + rapports HTML (backend + frontend)
+            // ✅ DAST (OWASP ZAP) - STABLE + port dédié (18080) + kill ZAP avant scan + rapports HTML
             stage('DAST (OWASP ZAP)') {
                 steps {
                     bat """
@@ -207,25 +210,27 @@
                     cd /d "%WORKSPACE%"
 
                     set "ZAP=${env.ZAP_HOME}\\zap.bat"
+                    set "ZAP_WORK=%WORKSPACE%\\zap-work"
 
-                    REM Dossier ZAP local au workspace (évite systemprofile)
-                    if not exist "%WORKSPACE%\\zap-work" mkdir "%WORKSPACE%\\zap-work"
+                    REM Nettoyage: fermer ZAP si déjà lancé (évite Address already in use)
+                    taskkill /F /IM ZAP.exe >nul 2>&1
+                    taskkill /F /IM zap.exe >nul 2>&1
+
+                    if not exist "%ZAP_WORK%" mkdir "%ZAP_WORK%"
 
                     cd /d "${env.ZAP_HOME}"
 
                     echo ===== DAST BACKEND (quick scan -> HTML report) =====
-                    call "%ZAP%" -cmd -dir "%WORKSPACE%\\zap-work" ^
+                    call "%ZAP%" -cmd -dir "%ZAP_WORK%" -port ${env.ZAP_PROXY_PORT} ^
                     -quickurl "${env.BACKEND_URL}" ^
                     -quickout "%WORKSPACE%\\zap-backend.html"
-                    set ZAP_BACKEND_EXIT=%ERRORLEVEL%
-                    echo ZAP_BACKEND_EXIT=%ZAP_BACKEND_EXIT%
+                    echo ZAP_BACKEND_EXIT=%ERRORLEVEL%
 
                     echo ===== DAST FRONTEND (quick scan -> HTML report) =====
-                    call "%ZAP%" -cmd -dir "%WORKSPACE%\\zap-work" ^
+                    call "%ZAP%" -cmd -dir "%ZAP_WORK%" -port ${env.ZAP_PROXY_PORT} ^
                     -quickurl "${env.FRONTEND_URL}" ^
                     -quickout "%WORKSPACE%\\zap-frontend.html"
-                    set ZAP_FRONTEND_EXIT=%ERRORLEVEL%
-                    echo ZAP_FRONTEND_EXIT=%ZAP_FRONTEND_EXIT%
+                    echo ZAP_FRONTEND_EXIT=%ERRORLEVEL%
 
                     echo ===== LIST REPORTS (preuve) =====
                     dir "%WORKSPACE%\\zap-*.html"
