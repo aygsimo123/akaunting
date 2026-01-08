@@ -94,14 +94,9 @@
 
                     REM Rapport JSON
                     "${env.SEMGREP}" --config=auto --json --output semgrep-report.json
-                    set SEMGREP_EXIT=%ERRORLEVEL%
 
                     REM Rapport TXT
                     "${env.SEMGREP}" --config=auto --output semgrep-report.txt
-                    set SEMGREP_EXIT2=%ERRORLEVEL%
-
-                    echo SEMGREP_EXIT=%SEMGREP_EXIT%
-                    echo SEMGREP_EXIT2=%SEMGREP_EXIT2%
 
                     REM Toujours réussir ce stage
                     exit /b 0
@@ -109,42 +104,85 @@
                 }
             }
 
+            // ✅ SCA Composer (AVANCÉ) : txt + json + CVE list (non-bloquant)
             stage('Securite (SCA)') {
                 steps {
                     bat '''
                     @echo on
-                    echo ===== COMPOSER AUDIT (non-bloquant) =====
+                    cd /d "%WORKSPACE%"
+
+                    echo ===== COMPOSER AUDIT (txt + json) =====
+                    call composer audit --format=json > composer-audit.json
+                    set AUDIT_JSON_EXIT=%ERRORLEVEL%
+
                     call composer audit > composer-audit.txt
-                    set AUDIT_EXIT=%ERRORLEVEL%
+                    set AUDIT_TXT_EXIT=%ERRORLEVEL%
 
+                    echo ===== RESUME SCA =====
+                    echo AUDIT_JSON_EXIT=%AUDIT_JSON_EXIT%
+                    echo AUDIT_TXT_EXIT=%AUDIT_TXT_EXIT%
+
+                    echo ===== CVE LIST (si existe) =====
+                    findstr /I /R "CVE-[0-9][0-9][0-9][0-9]-[0-9]" composer-audit.txt > composer-cves.txt
+                    if exist composer-cves.txt (
+                    for /f %%A in ('type composer-cves.txt ^| find /c /v ""') do set CVE_COUNT=%%A
+                    ) else (
+                    set CVE_COUNT=0
+                    )
+                    echo CVE_COUNT=%CVE_COUNT%
+
+                    echo ===== PREUVE (contenu audit) =====
                     type composer-audit.txt
-                    echo COMPOSER_AUDIT_EXIT=%AUDIT_EXIT%
 
+                    REM non-bloquant pour la presentation
                     exit /b 0
                     '''
                 }
             }
 
+            // ✅ npm (AVANCÉ) : déclenché par package.json + auto install + audit txt/json (non-bloquant)
             stage('Securite (npm)') {
-                when { expression { fileExists('package-lock.json') } }
+                when { expression { fileExists('package.json') } }
                 steps {
                     bat '''
                     @echo on
+                    cd /d "%WORKSPACE%"
+
+                    echo ===== NODE / NPM =====
                     node -v
                     npm -v
 
-                    echo ===== NPM CI (non-bloquant) =====
+                    echo ===== INSTALL DEPS (auto) =====
+                    if exist "package-lock.json" (
+                    echo package-lock.json present => npm ci
                     call npm ci > npm-ci.txt
-                    set NPM_CI_EXIT=%ERRORLEVEL%
-                    type npm-ci.txt
-                    echo NPM_CI_EXIT=%NPM_CI_EXIT%
+                    set NPM_INSTALL_EXIT=%ERRORLEVEL%
+                    ) else (
+                    echo package-lock.json absent => npm install (genere lockfile)
+                    call npm install --no-fund --no-audit > npm-install.txt
+                    set NPM_INSTALL_EXIT=%ERRORLEVEL%
+                    )
+                    echo NPM_INSTALL_EXIT=%NPM_INSTALL_EXIT%
 
-                    echo ===== NPM AUDIT (high+) (non-bloquant) =====
+                    if not "%NPM_INSTALL_EXIT%"=="0" (
+                    echo WARNING: npm install/ci failed (non-bloquant)
+                    exit /b 0
+                    )
+
+                    echo ===== NPM AUDIT (txt + json) =====
                     call npm audit --audit-level=high > npm-audit.txt
-                    set NPM_AUDIT_EXIT=%ERRORLEVEL%
-                    type npm-audit.txt
-                    echo NPM_AUDIT_EXIT=%NPM_AUDIT_EXIT%
+                    set NPM_AUDIT_TXT_EXIT=%ERRORLEVEL%
 
+                    call npm audit --json > npm-audit.json
+                    set NPM_AUDIT_JSON_EXIT=%ERRORLEVEL%
+
+                    echo ===== RESUME NPM =====
+                    echo NPM_AUDIT_TXT_EXIT=%NPM_AUDIT_TXT_EXIT%
+                    echo NPM_AUDIT_JSON_EXIT=%NPM_AUDIT_JSON_EXIT%
+
+                    type npm-audit.txt
+
+                    REM non-bloquant pour la presentation
                     exit /b 0
                     '''
                 }
@@ -217,9 +255,11 @@
                     }
                 }
 
-                // Tests + rapports sécurité
+                // Tests + rapports
                 archiveArtifacts artifacts: 'build/reports/**', allowEmptyArchive: true
-                archiveArtifacts artifacts: 'composer-audit.txt, npm-ci.txt, npm-audit.txt', allowEmptyArchive: true
+
+                // ✅ Security reports (PHP + JS)
+                archiveArtifacts artifacts: 'composer-audit.txt, composer-audit.json, composer-cves.txt, npm-ci.txt, npm-install.txt, npm-audit.txt, npm-audit.json', allowEmptyArchive: true
 
                 // ✅ Semgrep reports
                 archiveArtifacts artifacts: 'semgrep-report.json, semgrep-report.txt', allowEmptyArchive: true
