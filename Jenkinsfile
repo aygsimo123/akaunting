@@ -18,8 +18,6 @@
 
             // ✅ ZAP path (ton installation)
             ZAP_HOME = "C:\\Program Files\\ZAP\\Zed Attack Proxy"
-            ZAP_HOST = "127.0.0.1"
-            ZAP_PORT = "8090"
 
             // ✅ Cibles DAST (adapte si besoin)
             BACKEND_URL  = "http://127.0.0.1:8000"
@@ -200,7 +198,7 @@
                 }
             }
 
-            // ✅ DAST (OWASP ZAP) - corrigé (PowerShell full path) + safe (ne tue pas java.exe)
+            // ✅ DAST (OWASP ZAP) - version STABLE (sans daemon) + rapports HTML (backend + frontend)
             stage('DAST (OWASP ZAP)') {
                 steps {
                     bat """
@@ -210,29 +208,29 @@
 
                     set "ZAP=${env.ZAP_HOME}\\zap.bat"
 
-                    echo ===== START ZAP DAEMON =====
-                    cd /d "${env.ZAP_HOME}"
-                    start "" /B "%ZAP%" -daemon -host ${env.ZAP_HOST} -port ${env.ZAP_PORT} -config api.disablekey=true
+                    REM Dossier ZAP local au workspace (évite systemprofile)
+                    if not exist "%WORKSPACE%\\zap-work" mkdir "%WORKSPACE%\\zap-work"
 
-                    echo ===== WAIT ZAP READY =====
-                    "${env.PSH}" -NoProfile -Command ^
-                    "for(\$i=0;\$i -lt 40;\$i++){try{(Invoke-WebRequest http://${env.ZAP_HOST}:${env.ZAP_PORT} -UseBasicParsing -TimeoutSec 2).StatusCode | Out-Null; exit 0}catch{Start-Sleep 1}}; exit 1"
-                    if errorlevel 1 (
-                    echo WARNING: ZAP not ready -> skip scan (non-bloquant)
-                    exit /b 0
-                    )
+                    cd /d "${env.ZAP_HOME}"
 
                     echo ===== DAST BACKEND (quick scan -> HTML report) =====
-                    cd /d "${env.ZAP_HOME}"
-                    call "%ZAP%" -cmd -quickurl "${env.BACKEND_URL}" -quickout "%WORKSPACE%\\zap-backend.html"
+                    call "%ZAP%" -cmd -dir "%WORKSPACE%\\zap-work" ^
+                    -quickurl "${env.BACKEND_URL}" ^
+                    -quickout "%WORKSPACE%\\zap-backend.html"
+                    set ZAP_BACKEND_EXIT=%ERRORLEVEL%
+                    echo ZAP_BACKEND_EXIT=%ZAP_BACKEND_EXIT%
 
                     echo ===== DAST FRONTEND (quick scan -> HTML report) =====
-                    call "%ZAP%" -cmd -quickurl "${env.FRONTEND_URL}" -quickout "%WORKSPACE%\\zap-frontend.html"
+                    call "%ZAP%" -cmd -dir "%WORKSPACE%\\zap-work" ^
+                    -quickurl "${env.FRONTEND_URL}" ^
+                    -quickout "%WORKSPACE%\\zap-frontend.html"
+                    set ZAP_FRONTEND_EXIT=%ERRORLEVEL%
+                    echo ZAP_FRONTEND_EXIT=%ZAP_FRONTEND_EXIT%
 
-                    echo ===== STOP ZAP =====
-                    taskkill /F /IM ZAP.exe >nul 2>&1
+                    echo ===== LIST REPORTS (preuve) =====
+                    dir "%WORKSPACE%\\zap-*.html"
 
-                    echo ===== DONE (DAST non-bloquant) =====
+                    REM non-bloquant pour la presentation
                     exit /b 0
                     """
                 }
