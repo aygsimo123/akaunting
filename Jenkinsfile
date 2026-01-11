@@ -310,13 +310,13 @@ if (Test-Path "vendor\\bin\\phpunit.bat") {
             // Tests + rapports
             archiveArtifacts artifacts: 'build/reports/**', allowEmptyArchive: true
 
-            // ✅ Security reports (PHP + JS)
+            //  Security reports (PHP + JS)
             archiveArtifacts artifacts: 'composer-audit.txt, composer-audit.json, composer-cves.txt, npm-ci.txt, npm-install.txt, npm-audit.txt, npm-audit.json', allowEmptyArchive: true
 
-            // ✅ Semgrep reports
+            //  Semgrep reports
             archiveArtifacts artifacts: 'semgrep-report.json, semgrep-report.txt', allowEmptyArchive: true
 
-            // ✅ DAST reports
+            //  DAST reports
             archiveArtifacts artifacts: 'zap-backend.html, zap-frontend.html', allowEmptyArchive: true
 
             archiveArtifacts artifacts: 'storage/logs/*.log', allowEmptyArchive: true
