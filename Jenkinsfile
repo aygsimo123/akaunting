@@ -76,6 +76,11 @@ pipeline {
                 setlocal EnableExtensions
                 cd /d "%WORKSPACE%"
 
+                echo ===== FRONTEND STAGE SIGNATURE: FRONT_V4_2026-01-12 =====
+                echo ===== FRONTEND: WORKSPACE =====
+                cd
+                dir
+
                 echo ===== FRONTEND: NODE / NPM =====
                 where node
                 where npm
@@ -83,41 +88,75 @@ pipeline {
                 npm -v
 
                 echo ===== FRONTEND: CHECK FILES =====
-                if exist "package.json" (echo OK: package.json FOUND) else (echo ERROR: package.json NOT FOUND & exit /b 1)
-                if exist "package-lock.json" (echo OK: package-lock.json FOUND) else (echo INFO: package-lock.json NOT FOUND)
+                if not exist "package.json" (
+                echo ERROR: package.json NOT FOUND
+                exit /b 1
+                )
+                if exist "package-lock.json" (
+                echo OK: package-lock.json FOUND
+                ) else (
+                echo INFO: package-lock.json NOT FOUND
+                )
 
                 echo ===== FRONTEND: INSTALL =====
                 if exist "package-lock.json" (
-                  echo Using npm ci...
-                  call npm ci
+                echo Using npm ci...
+                call npm ci --loglevel=info
                 ) else (
-                  echo Using npm install...
-                  call npm install --no-fund --no-audit
+                echo Using npm install...
+                call npm install --no-fund --no-audit --loglevel=info
                 )
                 if errorlevel 1 (
-                  echo ERROR: npm install/ci failed
-                  exit /b 1
+                echo ERROR: npm install/ci failed
+                exit /b 1
                 )
 
-                echo ===== FRONTEND: BUILD (if exists) =====
+                echo ===== FRONTEND: VERIFY node_modules =====
+                if exist "node_modules" (
+                echo OK: node_modules created
+                ) else (
+                echo ERROR: node_modules missing after install
+                exit /b 1
+                )
+
+                echo ===== FRONTEND: BUILD (Akaunting) =====
+                REM Akaunting utilise souvent prod/production (pas toujours "build")
+                call npm run | findstr /I /R "prod production build" >nul
+                if errorlevel 1 (
+                echo INFO: no prod/production/build script -> skip build
+                exit /b 0
+                )
+
+                call npm run | findstr /I "production" >nul
+                if not errorlevel 1 (
+                echo Running: npm run production
+                call npm run production
+                if errorlevel 1 exit /b 1
+                exit /b 0
+                )
+
+                call npm run | findstr /I "prod" >nul
+                if not errorlevel 1 (
+                echo Running: npm run prod
+                call npm run prod
+                if errorlevel 1 exit /b 1
+                exit /b 0
+                )
+
                 call npm run | findstr /I "build" >nul
-                if errorlevel 1 (
-                  echo INFO: script "build" not found -> skip build
-                  exit /b 0
-                )
-
-                echo Running npm run build...
+                if not errorlevel 1 (
+                echo Running: npm run build
                 call npm run build
-                if errorlevel 1 (
-                  echo ERROR: npm run build failed
-                  exit /b 1
+                if errorlevel 1 exit /b 1
+                exit /b 0
                 )
 
-                echo ===== FRONTEND DONE =====
+                echo INFO: build scripts not matched -> skip
                 exit /b 0
                 '''
             }
         }
+
 
         stage('SAST (Semgrep)') {
             steps {
