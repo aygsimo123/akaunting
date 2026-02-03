@@ -202,43 +202,35 @@ pipeline {
             steps {
                 bat '''
                 @echo on
+                setlocal EnableExtensions
                 cd /d "%WORKSPACE%"
 
-                echo ===== Detect npm scripts (package.json) =====
+                echo ===== npm scripts (safe) =====
+                echo (Akaunting uses Laravel Mix => production)
 
-                REM --- Check if "test" script exists ---
-                node -e "const s=require('./package.json').scripts||{}; process.exit(s.test?0:1)"
-                if "%ERRORLEVEL%"=="0" (
-                echo ===== RUN TEST (script exists) =====
-                call npm run test
-                if errorlevel 1 exit /b 1
-                ) else (
-                echo ===== SKIP TEST (no script:test) =====
-                )
+                echo ===== RUN TEST (if present) =====
+                call npm run test --if-present
+                set TEST_EXIT=%ERRORLEVEL%
+                echo TEST_EXIT=%TEST_EXIT%
+                if not "%TEST_EXIT%"=="0" exit /b %TEST_EXIT%
 
-                REM --- Check if "build" script exists ---
-                node -e "const s=require('./package.json').scripts||{}; process.exit(s.build?0:1)"
-                if "%ERRORLEVEL%"=="0" (
-                echo ===== RUN BUILD (script exists) =====
-                call npm run build
-                if errorlevel 1 exit /b 1
-                ) else (
-                echo ===== No script:build -> use Laravel Mix production =====
-                node -e "const s=require('./package.json').scripts||{}; process.exit(s.production?0:1)"
-                if "%ERRORLEVEL%"=="0" (
-                    echo ===== RUN PRODUCTION (mix --production) =====
-                    call npm run production
-                    if errorlevel 1 exit /b 1
-                ) else (
-                    echo WARNING: no script:production found, nothing to build
-                    exit /b 0
-                )
-                )
+                echo ===== RUN BUILD (if present) =====
+                call npm run build --if-present
+                set BUILD_EXIT=%ERRORLEVEL%
+                echo BUILD_EXIT=%BUILD_EXIT%
+                if not "%BUILD_EXIT%"=="0" exit /b %BUILD_EXIT%
 
-                echo ===== npm build stage done =====
+                echo ===== RUN PRODUCTION (mix --production) (if present) =====
+                call npm run production --if-present
+                set PROD_EXIT=%ERRORLEVEL%
+                echo PROD_EXIT=%PROD_EXIT%
+                if not "%PROD_EXIT%"=="0" exit /b %PROD_EXIT%
+
+                endlocal
                 '''
             }
         }
+
 
 
         // ✅ npm (AVANCÉ) : audit seulement (non-bloquant), réutilise node_modules
