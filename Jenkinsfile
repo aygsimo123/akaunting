@@ -154,78 +154,93 @@ pipeline {
         }
 
         // ==========================
-        // ✅ NOUVEAU : npm install
+        // ✅ npm install (preuve obligatoire)
         // ==========================
         stage('npm - Install deps') {
             when { expression { fileExists('package.json') } }
             steps {
                 bat '''
                 @echo on
+                setlocal EnableExtensions
                 cd /d "%WORKSPACE%"
 
                 echo ===== NODE / NPM =====
                 node -v
                 npm -v
 
+                echo ===== package-lock.json? =====
+                if exist package-lock.json (echo YES) else (echo NO)
+
+                echo ===== CLEAN node_modules (avoid fake cache) =====
+                if exist node_modules (
+                  rmdir /s /q node_modules
+                )
+
                 echo ===== INSTALL DEPS =====
                 if exist "package-lock.json" (
-                  echo package-lock.json present => npm ci
-                  call npm ci --no-fund --no-audit > npm-ci.txt
-                  set NPM_INSTALL_EXIT=%ERRORLEVEL%
+                  echo Running: npm ci
+                  call npm ci --no-fund --no-audit
                 ) else (
-                  echo package-lock.json absent => npm install
-                  call npm install --no-fund --no-audit > npm-install.txt
-                  set NPM_INSTALL_EXIT=%ERRORLEVEL%
+                  echo Running: npm install
+                  call npm install --no-fund --no-audit
                 )
 
-                echo NPM_INSTALL_EXIT=%NPM_INSTALL_EXIT%
-                if not "%NPM_INSTALL_EXIT%"=="0" (
-                  echo ERROR: npm install/ci failed
-                  exit /b %NPM_INSTALL_EXIT%
-                )
+                if errorlevel 1 exit /b 1
 
-                echo ===== node_modules ready =====
-                if not exist "node_modules" (
-                  echo ERROR: node_modules introuvable apres installation
+                echo ===== PROOF: node_modules\\.bin =====
+                if not exist "node_modules\\.bin" (
+                  echo ERROR: node_modules\\.bin introuvable => install failed or wrong folder
                   dir
                   exit /b 1
                 )
+
+                dir node_modules\\.bin
+                endlocal
                 '''
             }
         }
 
         // ==========================
-        // ✅ NOUVEAU : npm test/build
+        // ✅ npm test/build + Laravel Mix production (Windows stable)
         // ==========================
         stage('npm - Frontend tests/build') {
-        when { expression { fileExists('package.json') } }
-        steps {
-            bat '''
-            @echo on
-            setlocal EnableExtensions
-            cd /d "%WORKSPACE%"
+            when { expression { fileExists('package.json') } }
+            steps {
+                bat '''
+                @echo on
+                setlocal EnableExtensions
+                cd /d "%WORKSPACE%"
 
-            echo ===== RUN TEST (if present) =====
-            call npm run test --if-present
-            if errorlevel 1 exit /b 1
+                echo ===== CHECK node_modules\\.bin =====
+                if not exist "node_modules\\.bin" (
+                  echo ERROR: node_modules\\.bin missing => npm install didn't run or failed
+                  exit /b 1
+                )
 
-            echo ===== RUN BUILD (if present) =====
-            call npm run build --if-present
-            if errorlevel 1 exit /b 1
+                echo ===== RUN TEST (if present) =====
+                call npm run test --if-present
+                if errorlevel 1 exit /b 1
 
-            echo ===== RUN PRODUCTION (Laravel Mix via npx) =====
-            call npx --no-install mix --production
-            if errorlevel 1 exit /b 1
+                echo ===== RUN BUILD (if present) =====
+                call npm run build --if-present
+                if errorlevel 1 exit /b 1
 
-            endlocal
-            '''
+                echo ===== RUN PRODUCTION (Laravel Mix local bin) =====
+                if exist "node_modules\\.bin\\mix.cmd" (
+                  call node_modules\\.bin\\mix.cmd --production
+                  if errorlevel 1 exit /b 1
+                ) else (
+                  echo ERROR: mix.cmd not found in node_modules\\.bin
+                  dir node_modules\\.bin
+                  exit /b 1
+                )
+
+                endlocal
+                '''
+            }
         }
-    }
 
-
-
-
-        // ✅ npm (AVANCÉ) : audit seulement (non-bloquant), réutilise node_modules
+        // ✅ npm audit seulement (non-bloquant)
         stage('Securite (npm)') {
             when { expression { fileExists('package.json') } }
             steps {
@@ -263,7 +278,7 @@ pipeline {
             }
         }
 
-        // ✅ DAST (OWASP ZAP) - STABLE + port dédié (18080) + kill ZAP avant scan + rapports HTML
+        // ✅ DAST (OWASP ZAP) - non-bloquant
         stage('DAST (OWASP ZAP)') {
             steps {
                 bat """
@@ -372,19 +387,18 @@ if (Test-Path "vendor\\bin\\phpunit.bat") {
             // Tests + rapports
             archiveArtifacts artifacts: 'build/reports/**', allowEmptyArchive: true
 
-            // ✅ npm build artifacts (si exist)
-            archiveArtifacts artifacts: 'dist/**', allowEmptyArchive: true
+            // Security reports (PHP + JS)
+            archiveArtifacts artifacts: 'composer-audit.txt, composer-audit.json, composer-cves.txt, npm-audit.txt, npm-audit.json', allowEmptyArchive: true
 
-            //  Security reports (PHP + JS)
-            archiveArtifacts artifacts: 'composer-audit.txt, composer-audit.json, composer-cves.txt, npm-ci.txt, npm-install.txt, npm-audit.txt, npm-audit.json', allowEmptyArchive: true
-
-            //  Semgrep reports
+            // Semgrep reports
             archiveArtifacts artifacts: 'semgrep-report.json, semgrep-report.txt', allowEmptyArchive: true
 
-            //  DAST reports
+            // DAST reports
             archiveArtifacts artifacts: 'zap-backend.html, zap-frontend.html', allowEmptyArchive: true
 
+            // Logs
             archiveArtifacts artifacts: 'storage/logs/*.log', allowEmptyArchive: true
+
             cleanWs()
         }
     }
