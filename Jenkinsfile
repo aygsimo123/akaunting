@@ -198,38 +198,30 @@ pipeline {
         // ✅ NOUVEAU : npm test/build
         // ==========================
         stage('npm - Frontend tests/build') {
-            when { expression { fileExists('package.json') } }
-            steps {
-                bat '''
-                @echo on
-                setlocal EnableExtensions
-                cd /d "%WORKSPACE%"
+        when { expression { fileExists('package.json') } }
+        steps {
+            bat '''
+            @echo on
+            setlocal EnableExtensions
+            cd /d "%WORKSPACE%"
 
-                echo ===== npm scripts (safe) =====
-                echo (Akaunting uses Laravel Mix => production)
+            echo ===== RUN TEST (if present) =====
+            call npm run test --if-present
+            if errorlevel 1 exit /b 1
 
-                echo ===== RUN TEST (if present) =====
-                call npm run test --if-present
-                set TEST_EXIT=%ERRORLEVEL%
-                echo TEST_EXIT=%TEST_EXIT%
-                if not "%TEST_EXIT%"=="0" exit /b %TEST_EXIT%
+            echo ===== RUN BUILD (if present) =====
+            call npm run build --if-present
+            if errorlevel 1 exit /b 1
 
-                echo ===== RUN BUILD (if present) =====
-                call npm run build --if-present
-                set BUILD_EXIT=%ERRORLEVEL%
-                echo BUILD_EXIT=%BUILD_EXIT%
-                if not "%BUILD_EXIT%"=="0" exit /b %BUILD_EXIT%
+            echo ===== RUN PRODUCTION (Laravel Mix via npx) =====
+            call npx --no-install mix --production
+            if errorlevel 1 exit /b 1
 
-                echo ===== RUN PRODUCTION (mix --production) (if present) =====
-                call npm run production --if-present
-                set PROD_EXIT=%ERRORLEVEL%
-                echo PROD_EXIT=%PROD_EXIT%
-                if not "%PROD_EXIT%"=="0" exit /b %PROD_EXIT%
-
-                endlocal
-                '''
-            }
+            endlocal
+            '''
         }
+    }
+
 
 
 
