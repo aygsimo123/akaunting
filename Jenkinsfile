@@ -201,29 +201,6 @@
                 }
             }
 
-            stage('Start Backend (Laravel)') {
-                steps {
-                    bat """
-                    @echo on
-                    cd /d "%WORKSPACE%"
-                    start "" /B php artisan serve --host=127.0.0.1 --port=8000
-                    timeout /t 12 /nobreak
-                    """
-                }
-            }
-
-            stage('Start Frontend (Vite)') {
-                when { expression { fileExists('package.json') } }
-                steps {
-                    bat """
-                    @echo on
-                    cd /d "%WORKSPACE%"
-                    start "" /B npm run dev -- --host 127.0.0.1 --port 5173
-                    timeout /t 12 /nobreak
-                    """
-                }
-            }
-
             // ✅ DAST (OWASP ZAP) - STABLE + port dédié (18080) + kill ZAP avant scan + rapports HTML
             stage('DAST (OWASP ZAP)') {
                 steps {
@@ -343,8 +320,6 @@
                 archiveArtifacts artifacts: 'zap-backend.html, zap-frontend.html', allowEmptyArchive: true
 
                 archiveArtifacts artifacts: 'storage/logs/*.log', allowEmptyArchive: true
-                bat 'taskkill /F /IM php.exe >nul 2>&1'
-                bat 'taskkill /F /IM node.exe >nul 2>&1'
                 cleanWs()
             }
         }
