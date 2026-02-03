@@ -204,21 +204,42 @@ pipeline {
                 @echo on
                 cd /d "%WORKSPACE%"
 
-                echo ===== RUN TEST =====
-                call npm run test --silent
-                set TEST_EXIT=%ERRORLEVEL%
-                echo TEST_EXIT=%TEST_EXIT%
+                echo ===== Detect npm scripts (package.json) =====
 
-                echo ===== RUN BUILD =====
-                call npm run build --silent
-                set BUILD_EXIT=%ERRORLEVEL%
-                echo BUILD_EXIT=%BUILD_EXIT%
+                REM --- Check if "test" script exists ---
+                node -e "const s=require('./package.json').scripts||{}; process.exit(s.test?0:1)"
+                if "%ERRORLEVEL%"=="0" (
+                echo ===== RUN TEST (script exists) =====
+                call npm run test
+                if errorlevel 1 exit /b 1
+                ) else (
+                echo ===== SKIP TEST (no script:test) =====
+                )
 
-                if not "%TEST_EXIT%"=="0" exit /b %TEST_EXIT%
-                if not "%BUILD_EXIT%"=="0" exit /b %BUILD_EXIT%
+                REM --- Check if "build" script exists ---
+                node -e "const s=require('./package.json').scripts||{}; process.exit(s.build?0:1)"
+                if "%ERRORLEVEL%"=="0" (
+                echo ===== RUN BUILD (script exists) =====
+                call npm run build
+                if errorlevel 1 exit /b 1
+                ) else (
+                echo ===== No script:build -> use Laravel Mix production =====
+                node -e "const s=require('./package.json').scripts||{}; process.exit(s.production?0:1)"
+                if "%ERRORLEVEL%"=="0" (
+                    echo ===== RUN PRODUCTION (mix --production) =====
+                    call npm run production
+                    if errorlevel 1 exit /b 1
+                ) else (
+                    echo WARNING: no script:production found, nothing to build
+                    exit /b 0
+                )
+                )
+
+                echo ===== npm build stage done =====
                 '''
             }
         }
+
 
         // ✅ npm (AVANCÉ) : audit seulement (non-bloquant), réutilise node_modules
         stage('Securite (npm)') {
