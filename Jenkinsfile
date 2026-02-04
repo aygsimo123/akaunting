@@ -154,48 +154,60 @@ pipeline {
         }
 
         // ==========================
-        // ✅ npm install (preuve obligatoire)
+        // ✅ npm install (preuve obligatoire) - version béton (CMD)
         // ==========================
         stage('npm - Install deps') {
             when { expression { fileExists('package.json') } }
             steps {
+                writeFile file: 'npm-install.cmd', text: (
+                    "@echo on\r\n" +
+                    "setlocal EnableExtensions\r\n" +
+                    "cd /d \"%WORKSPACE%\"\r\n" +
+                    "\r\n" +
+                    "echo ===== NODE / NPM =====\r\n" +
+                    "node -v\r\n" +
+                    "npm -v\r\n" +
+                    "\r\n" +
+                    "echo ===== WHERE AM I =====\r\n" +
+                    "cd\r\n" +
+                    "dir\r\n" +
+                    "\r\n" +
+                    "echo ===== package-lock.json? =====\r\n" +
+                    "if exist package-lock.json (echo YES) else (echo NO)\r\n" +
+                    "\r\n" +
+                    "echo ===== CLEAN node_modules (avoid fake cache) =====\r\n" +
+                    "if exist node_modules rmdir /s /q node_modules\r\n" +
+                    "\r\n" +
+                    "echo ===== INSTALL DEPS =====\r\n" +
+                    "if exist package-lock.json (\r\n" +
+                    "  echo Running: npm ci\r\n" +
+                    "  call npm ci --no-fund --no-audit\r\n" +
+                    ") else (\r\n" +
+                    "  echo Running: npm install\r\n" +
+                    "  call npm install --no-fund --no-audit\r\n" +
+                    ")\r\n" +
+                    "set NPM_INSTALL_EXIT=%ERRORLEVEL%\r\n" +
+                    "echo NPM_INSTALL_EXIT=%NPM_INSTALL_EXIT%\r\n" +
+                    "if not \"%NPM_INSTALL_EXIT%\"==\"0\" exit /b %NPM_INSTALL_EXIT%\r\n" +
+                    "\r\n" +
+                    "echo ===== PROOF: node_modules\\\\.bin =====\r\n" +
+                    "if not exist \"node_modules\\\\.bin\" (\r\n" +
+                    "  echo ERROR: node_modules\\\\.bin introuvable => install failed or wrong folder\r\n" +
+                    "  dir\r\n" +
+                    "  exit /b 1\r\n" +
+                    ")\r\n" +
+                    "dir node_modules\\\\.bin\r\n" +
+                    "\r\n" +
+                    "endlocal\r\n"
+                )
+
                 bat '''
                 @echo on
-                setlocal EnableExtensions
-                cd /d "%WORKSPACE%"
-
-                echo ===== NODE / NPM =====
-                node -v
-                npm -v
-
-                echo ===== package-lock.json? =====
-                if exist package-lock.json (echo YES) else (echo NO)
-
-                echo ===== CLEAN node_modules (avoid fake cache) =====
-                if exist node_modules (
-                  rmdir /s /q node_modules
-                )
-
-                echo ===== INSTALL DEPS =====
-                if exist "package-lock.json" (
-                  echo Running: npm ci
-                  call npm ci --no-fund --no-audit
-                ) else (
-                  echo Running: npm install
-                  call npm install --no-fund --no-audit
-                )
-
+                echo ===== SHOW npm-install.cmd =====
+                type npm-install.cmd
+                echo ===== RUN npm-install.cmd =====
+                call npm-install.cmd
                 if errorlevel 1 exit /b 1
-
-                echo ===== PROOF: node_modules\\.bin =====
-                if not exist "node_modules\\.bin" (
-                  echo ERROR: node_modules\\.bin introuvable => install failed or wrong folder
-                  dir
-                  exit /b 1
-                )
-
-                dir node_modules\\.bin
-                endlocal
                 '''
             }
         }
@@ -214,6 +226,7 @@ pipeline {
                 echo ===== CHECK node_modules\\.bin =====
                 if not exist "node_modules\\.bin" (
                   echo ERROR: node_modules\\.bin missing => npm install didn't run or failed
+                  dir
                   exit /b 1
                 )
 
