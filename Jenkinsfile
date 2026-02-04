@@ -123,89 +123,67 @@
               }
           }
 
-          // ==========================
-          // ✅ npm install (FORCÉ, sans vérification package.json) + preuve node_modules\.bin
-          // ==========================
           stage('npm - Install deps') {
               steps {
-                  writeFile file: 'npm-install.cmd', text: (
-                      "@echo on\r\n" +
-                      "setlocal EnableExtensions\r\n" +
-                      "cd /d \"%WORKSPACE%\"\r\n" +
-                      "\r\n" +
-                      "echo ===== NODE / NPM =====\r\n" +
-                      "node -v\r\n" +
-                      "npm -v\r\n" +
-                      "\r\n" +
-                      "echo ===== LIST ROOT (preuve) =====\r\n" +
-                      "dir\r\n" +
-                      "\r\n" +
-                      "echo ===== CLEAN node_modules =====\r\n" +
-                      "if exist node_modules rmdir /s /q node_modules\r\n" +
-                      "\r\n" +
-                      "echo ===== INSTALL DEPS =====\r\n" +
-                      "if exist package-lock.json (\r\n" +
-                      "  echo Running: npm ci\r\n" +
-                      "  call npm ci --no-fund --no-audit\r\n" +
-                      ") else (\r\n" +
-                      "  echo Running: npm install\r\n" +
-                      "  call npm install --no-fund --no-audit\r\n" +
-                      ")\r\n" +
-                      "set NPM_INSTALL_EXIT=%ERRORLEVEL%\r\n" +
-                      "echo NPM_INSTALL_EXIT=%NPM_INSTALL_EXIT%\r\n" +
-                      "if not \"%NPM_INSTALL_EXIT%\"==\"0\" exit /b %NPM_INSTALL_EXIT%\r\n" +
-                      "\r\n" +
-                      "echo ===== PROOF: node_modules\\\\.bin =====\r\n" +
-                      "if not exist \"node_modules\\\\.bin\" (\r\n" +
-                      "  echo ERROR: node_modules\\\\.bin missing\r\n" +
-                      "  dir\r\n" +
-                      "  exit /b 1\r\n" +
-                      ")\r\n" +
-                      "dir node_modules\\\\.bin\r\n" +
-                      "\r\n" +
-                      "endlocal\r\n"
-                  )
+                  writeFile file: 'npm-install.ps1', text: '''
+          $ErrorActionPreference = "Stop"
+          Set-Location $env:WORKSPACE
 
-                  bat '''
+          Write-Host "===== NODE / NPM ====="
+          node -v
+          npm -v
+
+          Write-Host "===== LIST ROOT (preuve) ====="
+          Get-ChildItem -Force | Select-Object Name
+
+          Write-Host "===== CLEAN node_modules ====="
+          if (Test-Path "node_modules") { Remove-Item -Recurse -Force "node_modules" }
+
+          Write-Host "===== INSTALL DEPS ====="
+          if (Test-Path "package-lock.json") {
+            Write-Host "Running: npm ci"
+            npm ci --no-fund --no-audit
+          } else {
+            Write-Host "Running: npm install"
+            npm install --no-fund --no-audit
+          }
+
+          Write-Host "===== PROOF: node_modules\\.bin ====="
+          if (!(Test-Path "node_modules\\.bin")) {
+            Write-Host "ERROR: node_modules\\.bin missing => install failed"
+            exit 1
+          }
+          Get-ChildItem "node_modules\\.bin" | Select-Object Name
+          '''
+                  bat """
                   @echo on
-                  call npm-install.cmd
+                  "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-install.ps1
                   if errorlevel 1 exit /b 1
-                  '''
+                  """
               }
           }
 
-          // ==========================
-          // ✅ Frontend build (Akaunting = Laravel Mix) : npm run production
-          // ==========================
+
           stage('npm - Frontend build (Mix production)') {
-              steps {
-                  writeFile file: 'npm-build.cmd', text: (
-                      "@echo on\r\n" +
-                      "setlocal EnableExtensions\r\n" +
-                      "cd /d \"%WORKSPACE%\"\r\n" +
-                      "\r\n" +
-                      "echo ===== CHECK node_modules\\\\.bin =====\r\n" +
-                      "if not exist \"node_modules\\\\.bin\" (\r\n" +
-                      "  echo ERROR: node_modules\\\\.bin missing => npm install failed\r\n" +
-                      "  exit /b 1\r\n" +
-                      ")\r\n" +
-                      "\r\n" +
-                      "echo ===== RUN PRODUCTION (mix --production) =====\r\n" +
-                      "call npm run production\r\n" +
-                      "set BUILD_EXIT=%ERRORLEVEL%\r\n" +
-                      "echo BUILD_EXIT=%BUILD_EXIT%\r\n" +
-                      "if not \"%BUILD_EXIT%\"==\"0\" exit /b %BUILD_EXIT%\r\n" +
-                      "\r\n" +
-                      "endlocal\r\n"
-                  )
+                steps {
+                    writeFile file: 'npm-build.ps1', text: '''
+            $ErrorActionPreference = "Stop"
+            Set-Location $env:WORKSPACE
 
-                  bat '''
-                  @echo on
-                  call npm-build.cmd
-                  if errorlevel 1 exit /b 1
-                  '''
-              }
-          }
+            Write-Host "===== CHECK node_modules\\.bin ====="
+            if (!(Test-Path "node_modules\\.bin")) { throw "node_modules\\.bin missing => npm install failed" }
+
+            Write-Host "===== RUN PRODUCTION (mix --production) ====="
+            npm run production
+            '''
+                    bat """
+                    @echo on
+                    "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-build.ps1
+                    if errorlevel 1 exit /b 1
+                    """
+                }
+            }
+
 
           // ✅ npm audit (non-bloquant)
           stage('Securite (npm)') {
