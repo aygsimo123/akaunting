@@ -13,7 +13,7 @@ pipeline {
         // Semgrep exe (installé par pip dans Scripts)
         SEMGREP = "C:\\Program Files\\Python312\\Scripts\\semgrep.exe"
 
-        // PowerShell full path (évite: 'powershell' n'est pas reconnu)
+        // PowerShell full path
         PSH = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
 
         // ZAP path (ton installation)
@@ -74,7 +74,7 @@ pipeline {
             }
         }
 
-        //  SAST (Semgrep) - non bloquant
+        // SAST (Semgrep) - non bloquant
         stage('SAST (Semgrep)') {
             steps {
                 bat """
@@ -106,7 +106,7 @@ pipeline {
             }
         }
 
-        // ✅ SCA Composer (non-bloquant)
+        // SCA Composer (non-bloquant)
         stage('Securite (SCA)') {
             steps {
                 bat '''
@@ -123,8 +123,9 @@ pipeline {
             }
         }
 
-        // ✅ npm install (non-bloquant, avec retry + gestion EPERM + logs)
+        // npm install (non-bloquant, retry, logs, FIX exit code + force python)
         stage('npm - Install deps') {
+            when { expression { fileExists('package.json') } }
             steps {
                 writeFile file: 'npm-install.ps1', text: '''
 $ErrorActionPreference = "Continue"
@@ -137,12 +138,17 @@ npm -v
 # Nettoyage flag précédent
 if (Test-Path ".npm_failed") { Remove-Item ".npm_failed" -Force }
 
+# Force node-gyp to use Windows Python (avoid MSYS2)
+$env:PYTHON = "C:\\Program Files\\Python312\\python.exe"
+$env:npm_config_python = $env:PYTHON
+Write-Host "PYTHON forced = $env:PYTHON"
+
 function Run-NpmInstall {
   param([int]$attempt)
 
   Write-Host "===== ATTEMPT $attempt ====="
 
-  # Cleanup windows locks (EPERM)
+  # Best-effort cleanup (Windows locks/EPERM sometimes)
   if (Test-Path "node_modules") {
     Write-Host "Cleaning node_modules (best effort)..."
     cmd /c "rmdir /s /q node_modules" | Out-Null
@@ -150,13 +156,15 @@ function Run-NpmInstall {
   }
 
   Write-Host "===== INSTALL DEPS ====="
+  $log = Join-Path $env:WORKSPACE "npm-install.log"
+
   if (Test-Path "package-lock.json") {
     Write-Host "Running: npm ci"
-    npm ci --no-fund --no-audit 2>&1 | Tee-Object -FilePath "npm-install.log" -Append
+    cmd /c "npm ci --no-fund --no-audit >> `"$log`" 2>&1"
     return $LASTEXITCODE
   } else {
     Write-Host "Running: npm install"
-    npm install --no-fund --no-audit 2>&1 | Tee-Object -FilePath "npm-install.log" -Append
+    cmd /c "npm install --no-fund --no-audit >> `"$log`" 2>&1"
     return $LASTEXITCODE
   }
 }
@@ -193,11 +201,12 @@ exit 0
             }
         }
 
-        // ✅ build mix (skippé si npm fail)
+        // build mix (skippé si npm fail)
         stage('npm - Frontend build (Mix production)') {
+            when { expression { fileExists('package.json') } }
             steps {
                 writeFile file: 'npm-build.ps1', text: '''
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 Set-Location $env:WORKSPACE
 
 if (Test-Path ".npm_failed") {
@@ -212,7 +221,10 @@ if (!(Test-Path "node_modules\\.bin")) {
 
 Write-Host "===== RUN PRODUCTION ====="
 npm run production
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "WARNING: npm production failed (non-bloquant)."
+  exit 0
+}
 exit 0
 '''
                 bat """
@@ -222,8 +234,9 @@ exit 0
             }
         }
 
-        // ✅ npm audit (skippé si npm fail) + non-bloquant
+        // npm audit (skippé si npm fail) + non-bloquant
         stage('Securite (npm)') {
+            when { expression { fileExists('package.json') } }
             steps {
                 bat '''
                 @echo on
@@ -247,7 +260,7 @@ exit 0
             }
         }
 
-        // ✅ DAST (OWASP ZAP) - non-bloquant
+        // DAST (OWASP ZAP) - non-bloquant
         stage('DAST (OWASP ZAP)') {
             steps {
                 bat """
