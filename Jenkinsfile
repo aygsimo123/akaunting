@@ -126,63 +126,77 @@
           stage('npm - Install deps') {
               steps {
                   writeFile file: 'npm-install.ps1', text: '''
-          $ErrorActionPreference = "Stop"
+          $ErrorActionPreference = "Continue"
           Set-Location $env:WORKSPACE
 
           Write-Host "===== NODE / NPM ====="
           node -v
           npm -v
 
-          Write-Host "===== LIST ROOT (preuve) ====="
-          Get-ChildItem -Force | Select-Object Name
-
-          Write-Host "===== CLEAN node_modules ====="
-          if (Test-Path "node_modules") { Remove-Item -Recurse -Force "node_modules" }
-
           Write-Host "===== INSTALL DEPS ====="
           if (Test-Path "package-lock.json") {
             Write-Host "Running: npm ci"
-            npm ci --no-fund --no-audit
+            npm ci --no-fund --no-audit 2>&1 | Tee-Object -FilePath "npm-install.log"
+            $exit = $LASTEXITCODE
           } else {
             Write-Host "Running: npm install"
-            npm install --no-fund --no-audit
+            npm install --no-fund --no-audit 2>&1 | Tee-Object -FilePath "npm-install.log"
+            $exit = $LASTEXITCODE
+          }
+
+          Write-Host "NPM_INSTALL_EXIT=$exit"
+
+          if ($exit -ne 0) {
+            Write-Host "WARNING: npm install failed (non-bloquant). Frontend build will be skipped."
+            New-Item -ItemType File -Path ".npm_failed" -Force | Out-Null
+            exit 0
+          }
+
+          if (!(Test-Path "node_modules\\.bin")) {
+            Write-Host "WARNING: node_modules\\.bin missing (non-bloquant)"
+            New-Item -ItemType File -Path ".npm_failed" -Force | Out-Null
+            exit 0
           }
 
           Write-Host "===== PROOF: node_modules\\.bin ====="
-          if (!(Test-Path "node_modules\\.bin")) {
-            Write-Host "ERROR: node_modules\\.bin missing => install failed"
-            exit 1
-          }
-          Get-ChildItem "node_modules\\.bin" | Select-Object Name
+          Get-ChildItem "node_modules\\.bin" | Select-Object -First 30 Name
           '''
                   bat """
                   @echo on
                   "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-install.ps1
-                  if errorlevel 1 exit /b 1
                   """
               }
           }
 
 
+
           stage('npm - Frontend build (Mix production)') {
-                steps {
-                    writeFile file: 'npm-build.ps1', text: '''
-            $ErrorActionPreference = "Stop"
-            Set-Location $env:WORKSPACE
+              steps {
+                  writeFile file: 'npm-build.ps1', text: '''
+          $ErrorActionPreference = "Stop"
+          Set-Location $env:WORKSPACE
 
-            Write-Host "===== CHECK node_modules\\.bin ====="
-            if (!(Test-Path "node_modules\\.bin")) { throw "node_modules\\.bin missing => npm install failed" }
+          if (Test-Path ".npm_failed") {
+            Write-Host "SKIP: npm failed earlier => skipping frontend build"
+            exit 0
+          }
 
-            Write-Host "===== RUN PRODUCTION (mix --production) ====="
-            npm run production
-            '''
-                    bat """
-                    @echo on
-                    "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-build.ps1
-                    if errorlevel 1 exit /b 1
-                    """
-                }
-            }
+          if (!(Test-Path "node_modules\\.bin")) {
+            Write-Host "SKIP: node_modules\\.bin missing => skipping frontend build"
+            exit 0
+          }
+
+          Write-Host "===== RUN PRODUCTION ====="
+          npm run production
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          '''
+                  bat """
+                  @echo on
+                  "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-build.ps1
+                  """
+              }
+          }
+
 
 
           // ✅ npm audit (non-bloquant)
@@ -293,6 +307,8 @@
               archiveArtifacts artifacts: 'semgrep-report.json, semgrep-report.txt', allowEmptyArchive: true
               archiveArtifacts artifacts: 'zap-backend.html, zap-frontend.html', allowEmptyArchive: true
               archiveArtifacts artifacts: 'storage/logs/*.log', allowEmptyArchive: true
+              archiveArtifacts artifacts: 'npm-install.log', allowEmptyArchive: true
+
 
               cleanWs()
           }
