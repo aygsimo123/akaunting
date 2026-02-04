@@ -127,79 +127,77 @@ pipeline {
         stage('npm - Install deps') {
             when { expression { fileExists('package.json') } }
             steps {
-                writeFile file: 'npm-install.ps1', text: '''
-$ErrorActionPreference = "Continue"
-Set-Location $env:WORKSPACE
+              writeFile file: 'npm-install.ps1', text: '''
+          $ErrorActionPreference = "Continue"
+          Set-Location $env:WORKSPACE
 
-Write-Host "===== NODE / NPM ====="
-node -v
-npm -v
+          Write-Host "===== NODE / NPM ====="
+          cmd /c "node -v"
+          cmd /c "npm -v"
 
-# Nettoyage flag précédent
-if (Test-Path ".npm_failed") { Remove-Item ".npm_failed" -Force }
+          # Reset flag
+          if (Test-Path ".npm_failed") { Remove-Item ".npm_failed" -Force }
 
-# Force node-gyp to use Windows Python (avoid MSYS2)
-$env:PYTHON = "C:\\Program Files\\Python312\\python.exe"
-$env:npm_config_python = $env:PYTHON
-Write-Host "PYTHON forced = $env:PYTHON"
+          # Force node-gyp python
+          $env:PYTHON = "C:\\Program Files\\Python312\\python.exe"
+          $env:npm_config_python = $env:PYTHON
+          Write-Host "PYTHON forced = $env:PYTHON"
 
-function Run-NpmInstall {
-  param([int]$attempt)
+          $log = Join-Path $env:WORKSPACE "npm-install.log"
+          if (Test-Path $log) { Remove-Item $log -Force }
 
-  Write-Host "===== ATTEMPT $attempt ====="
+          function Try-Install([int]$attempt) {
+            Write-Host "===== ATTEMPT $attempt ====="
 
-  # Best-effort cleanup (Windows locks/EPERM sometimes)
-  if (Test-Path "node_modules") {
-    Write-Host "Cleaning node_modules (best effort)..."
-    cmd /c "rmdir /s /q node_modules" | Out-Null
-    Start-Sleep -Seconds 2
-  }
-
-  Write-Host "===== INSTALL DEPS ====="
-  $log = Join-Path $env:WORKSPACE "npm-install.log"
-
-  if (Test-Path "package-lock.json") {
-    Write-Host "Running: npm ci"
-    cmd /c "npm ci --no-fund --no-audit >> `"$log`" 2>&1"
-    return $LASTEXITCODE
-  } else {
-    Write-Host "Running: npm install"
-    cmd /c "npm install --no-fund --no-audit >> `"$log`" 2>&1"
-    return $LASTEXITCODE
-  }
-}
-
-$exit = Run-NpmInstall -attempt 1
-if ($exit -ne 0) {
-  Write-Host "WARNING: npm install failed (attempt 1). retry in 5s..."
-  Start-Sleep -Seconds 5
-  $exit = Run-NpmInstall -attempt 2
-}
-
-Write-Host "NPM_INSTALL_EXIT=$exit"
-
-if ($exit -ne 0) {
-  Write-Host "WARNING: npm install failed (non-bloquant). Frontend build + npm audit will be skipped."
-  New-Item -ItemType File -Path ".npm_failed" -Force | Out-Null
-  exit 0
-}
-
-if (!(Test-Path "node_modules\\.bin")) {
-  Write-Host "WARNING: node_modules\\.bin missing (non-bloquant). Frontend build + npm audit will be skipped."
-  New-Item -ItemType File -Path ".npm_failed" -Force | Out-Null
-  exit 0
-}
-
-Write-Host "===== PROOF: node_modules\\.bin ====="
-Get-ChildItem "node_modules\\.bin" | Select-Object -First 30 Name
-exit 0
-'''
-                bat """
-                @echo on
-                "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-install.ps1
-                """
+            if (Test-Path "node_modules") {
+              Write-Host "Cleaning node_modules (best effort)..."
+              cmd /c "rmdir /s /q node_modules" >> $log 2>&1
+              Start-Sleep -Seconds 2
             }
-        }
+
+            if (Test-Path "package-lock.json") {
+              Write-Host "Running: npm ci"
+              cmd /c "npm ci --no-fund --no-audit >> `"$log`" 2>&1"
+            } else {
+              Write-Host "Running: npm install"
+              cmd /c "npm install --no-fund --no-audit >> `"$log`" 2>&1"
+            }
+
+            return $LASTEXITCODE
+          }
+
+          $exit = Try-Install 1
+          if ($exit -ne 0) {
+            Write-Host "WARNING: npm install failed (attempt 1). retry in 5s..."
+            Start-Sleep -Seconds 5
+            $exit = Try-Install 2
+          }
+
+          Write-Host "NPM_INSTALL_EXIT=$exit"
+
+          if ($exit -ne 0) {
+            Write-Host "WARNING: npm install failed (non-bloquant). Frontend build + npm audit will be skipped."
+            New-Item -ItemType File -Path ".npm_failed" -Force | Out-Null
+            exit 0
+          }
+
+          if (!(Test-Path "node_modules\\.bin")) {
+            Write-Host "WARNING: node_modules\\.bin missing (non-bloquant). Frontend build + npm audit will be skipped."
+            New-Item -ItemType File -Path ".npm_failed" -Force | Out-Null
+            exit 0
+          }
+
+          Write-Host "===== PROOF: node_modules\\.bin ====="
+          cmd /c "dir node_modules\\.bin" | Select-Object -First 50
+          exit 0
+          '''
+              bat """
+              @echo on
+              "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-install.ps1
+              """
+            }
+          }
+
 
         // build mix (skippé si npm fail)
         stage('npm - Frontend build (Mix production)') {
