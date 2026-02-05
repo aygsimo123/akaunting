@@ -270,7 +270,7 @@ pipeline {
                 """
             }
         }
-
+    }
         
 
     post {
@@ -292,4 +292,4 @@ pipeline {
             cleanWs()
         }
     }
-    }}
+    }
