@@ -75,7 +75,7 @@ pipeline {
         }
 
         // SAST (Semgrep) - non bloquant
-        stage('SAST (Semgrep)') {
+        stage('SAST (Semgrep)'){
             steps {
                 bat """
                 @echo on
@@ -123,140 +123,122 @@ pipeline {
             }
         }
 
-        // npm install (non-bloquant, retry, logs, FIX exit code + force python)
-        stage('npm - Install deps') {
-            when { expression { fileExists('package.json') } }
-            steps {
-              writeFile file: 'npm-install.ps1', text: '''
-          $ErrorActionPreference = "Continue"
-          Set-Location $env:WORKSPACE
+      // npm install (non-bloquant, logs, force python, NEVER fail Jenkins)
+      stage('npm - Install deps') {
+        steps {
+          writeFile file: 'npm-install.ps1', text: '''
+      $ErrorActionPreference = "Continue"
+      Set-Location $env:WORKSPACE
 
-          Write-Host "===== NODE / NPM ====="
-          cmd /c "node -v"
-          cmd /c "npm -v"
+      if (!(Test-Path "package.json")) {
+        Write-Host "SKIP: package.json not found"
+        exit 0
+      }
 
-          # Reset flag
-          if (Test-Path ".npm_failed") { Remove-Item ".npm_failed" -Force }
+      Write-Host "===== NODE / NPM ====="
+      cmd /c "node -v"
+      cmd /c "npm -v"
 
-          # Force node-gyp python
-          $env:PYTHON = "C:\\Program Files\\Python312\\python.exe"
-          $env:npm_config_python = $env:PYTHON
-          Write-Host "PYTHON forced = $env:PYTHON"
+      # Force python for node-gyp
+      $env:PYTHON = "C:\\Program Files\\Python312\\python.exe"
+      $env:npm_config_python = $env:PYTHON
 
-          $log = Join-Path $env:WORKSPACE "npm-install.log"
-          if (Test-Path $log) { Remove-Item $log -Force }
+      # Reset flag
+      if (Test-Path ".npm_failed") { Remove-Item ".npm_failed" -Force }
 
-          function Try-Install([int]$attempt) {
-            Write-Host "===== ATTEMPT $attempt ====="
+      Write-Host "===== INSTALL DEPS ====="
+      $log = Join-Path $env:WORKSPACE "npm-install.log"
+      if (Test-Path $log) { Remove-Item $log -Force }
 
-            if (Test-Path "node_modules") {
-              Write-Host "Cleaning node_modules (best effort)..."
-              cmd /c "rmdir /s /q node_modules" >> $log 2>&1
-              Start-Sleep -Seconds 2
-            }
+      if (Test-Path "package-lock.json") {
+        cmd /c "npm ci --no-fund --no-audit >> `"$log`" 2>&1"
+      } else {
+        cmd /c "npm install --no-fund --no-audit >> `"$log`" 2>&1"
+      }
 
-            if (Test-Path "package-lock.json") {
-              Write-Host "Running: npm ci"
-              cmd /c "npm ci --no-fund --no-audit >> `"$log`" 2>&1"
-            } else {
-              Write-Host "Running: npm install"
-              cmd /c "npm install --no-fund --no-audit >> `"$log`" 2>&1"
-            }
+      $exit = $LASTEXITCODE
+      Write-Host "NPM_INSTALL_EXIT=$exit"
 
-            return $LASTEXITCODE
-          }
+      if ($exit -ne 0) {
+        Write-Host "WARNING: npm failed (non-bloquant). build/audit will be skipped."
+        New-Item -ItemType File -Path ".npm_failed" -Force | Out-Null
+      }
 
-          $exit = Try-Install 1
-          if ($exit -ne 0) {
-            Write-Host "WARNING: npm install failed (attempt 1). retry in 5s..."
-            Start-Sleep -Seconds 5
-            $exit = Try-Install 2
-          }
+      exit 0
+      '''
+          bat """
+          @echo on
+          "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-install.ps1 || exit /b 0
+          exit /b 0
+          """
+        }
+      }
 
-          Write-Host "NPM_INSTALL_EXIT=$exit"
+      // build mix (skippé si npm fail) - NEVER fail Jenkins
+      stage('npm - Frontend build (Mix production)') {
+        steps {
+          writeFile file: 'npm-build.ps1', text: '''
+      $ErrorActionPreference = "Continue"
+      Set-Location $env:WORKSPACE
 
-          if ($exit -ne 0) {
-            Write-Host "WARNING: npm install failed (non-bloquant). Frontend build + npm audit will be skipped."
-            New-Item -ItemType File -Path ".npm_failed" -Force | Out-Null
-            exit 0
-          }
+      if (!(Test-Path "package.json")) {
+        Write-Host "SKIP: package.json not found"
+        exit 0
+      }
 
-          if (!(Test-Path "node_modules\\.bin")) {
-            Write-Host "WARNING: node_modules\\.bin missing (non-bloquant). Frontend build + npm audit will be skipped."
-            New-Item -ItemType File -Path ".npm_failed" -Force | Out-Null
-            exit 0
-          }
+      if (Test-Path ".npm_failed") {
+        Write-Host "SKIP: npm failed earlier => skipping frontend build"
+        exit 0
+      }
 
-          Write-Host "===== PROOF: node_modules\\.bin ====="
-          cmd /c "dir node_modules\\.bin" | Select-Object -First 50
-          exit 0
+      if (!(Test-Path "node_modules\\.bin")) {
+        Write-Host "SKIP: node_modules\\.bin missing => skipping frontend build"
+        exit 0
+      }
+
+      Write-Host "===== RUN PRODUCTION ====="
+      cmd /c "npm run production"
+      Write-Host "NPM_PROD_EXIT=$LASTEXITCODE"
+      exit 0
+      '''
+          bat """
+          @echo on
+          "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-build.ps1 || exit /b 0
+          exit /b 0
+          """
+        }
+      }
+
+      // npm audit (skippé si npm fail) + non-bloquant
+      stage('Securite (npm)') {
+        steps {
+          bat '''
+          @echo on
+          cd /d "%WORKSPACE%"
+
+          if not exist package.json (
+            echo SKIP: package.json missing
+            exit /b 0
+          )
+
+          if exist .npm_failed (
+            echo SKIP: npm install failed => skipping npm audit
+            exit /b 0
+          )
+
+          if not exist node_modules (
+            echo SKIP: node_modules missing => skipping npm audit
+            exit /b 0
+          )
+
+          call npm audit --audit-level=high > npm-audit.txt
+          call npm audit --json > npm-audit.json
+
+          exit /b 0
           '''
-              bat """
-              @echo on
-              "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-install.ps1
-              """
-            }
-          }
-
-
-        // build mix (skippé si npm fail)
-        stage('npm - Frontend build (Mix production)') {
-            when { expression { fileExists('package.json') } }
-            steps {
-                writeFile file: 'npm-build.ps1', text: '''
-$ErrorActionPreference = "Continue"
-Set-Location $env:WORKSPACE
-
-if (Test-Path ".npm_failed") {
-  Write-Host "SKIP: npm failed earlier => skipping frontend build"
-  exit 0
-}
-
-if (!(Test-Path "node_modules\\.bin")) {
-  Write-Host "SKIP: node_modules\\.bin missing => skipping frontend build"
-  exit 0
-}
-
-Write-Host "===== RUN PRODUCTION ====="
-npm run production
-if ($LASTEXITCODE -ne 0) {
-  Write-Host "WARNING: npm production failed (non-bloquant)."
-  exit 0
-}
-exit 0
-'''
-                bat """
-                @echo on
-                "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-build.ps1
-                """
-            }
         }
+      }
 
-        // npm audit (skippé si npm fail) + non-bloquant
-        stage('Securite (npm)') {
-            when { expression { fileExists('package.json') } }
-            steps {
-                bat '''
-                @echo on
-                cd /d "%WORKSPACE%"
-
-                if exist .npm_failed (
-                  echo SKIP: npm install failed => skipping npm audit
-                  exit /b 0
-                )
-
-                if not exist node_modules (
-                  echo SKIP: node_modules missing => skipping npm audit
-                  exit /b 0
-                )
-
-                call npm audit --audit-level=high > npm-audit.txt
-                call npm audit --json > npm-audit.json
-
-                exit /b 0
-                '''
-            }
-        }
 
         // DAST (OWASP ZAP) - non-bloquant
         stage('DAST (OWASP ZAP)') {
