@@ -19,7 +19,7 @@ pipeline {
         // ZAP path (ton installation)
         ZAP_HOME = "C:\\Program Files\\ZAP\\Zed Attack Proxy"
 
-        // Cibles DAST (adapte si besoin)
+        // Cibles DAST
         BACKEND_URL  = "http://127.0.0.1:8000"
         FRONTEND_URL = "http://127.0.0.1:5173"
 
@@ -29,10 +29,12 @@ pipeline {
 
     stages {
 
+        // 1) Checkout
         stage('Checkout') {
             steps { checkout scm }
         }
 
+        // 2) Dependances PHP (Composer)
         stage('Dependances PHP (Composer)') {
             steps {
                 writeFile file: 'composer-install.cmd', text: (
@@ -74,8 +76,74 @@ pipeline {
             }
         }
 
-        // SAST (Semgrep) - non bloquant
-        stage('SAST (Semgrep)'){
+        // 3) npm - Install deps
+        stage('npm - Install deps') {
+            steps {
+                writeFile file: 'npm-install.ps1', text: '''
+$ErrorActionPreference = "Continue"
+Set-Location $env:WORKSPACE
+
+if (!(Test-Path "package.json")) {
+  Write-Host "SKIP: package.json not found"
+  exit 0
+}
+
+Write-Host "===== NODE / NPM ====="
+cmd /c "node -v"
+cmd /c "npm -v"
+
+$env:PYTHON = "C:\\Program Files\\Python312\\python.exe"
+$env:npm_config_python = $env:PYTHON
+
+if (Test-Path ".npm_failed") { Remove-Item ".npm_failed" -Force }
+
+$log = Join-Path $env:WORKSPACE "npm-install.log"
+if (Test-Path $log) { Remove-Item $log -Force }
+
+if (Test-Path "package-lock.json") {
+  cmd /c "npm ci --no-fund --no-audit >> `"$log`" 2>&1"
+} else {
+  cmd /c "npm install --no-fund --no-audit >> `"$log`" 2>&1"
+}
+
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "WARNING: npm install failed -> frontend stages skipped"
+  New-Item -ItemType File -Path ".npm_failed" -Force | Out-Null
+}
+
+exit 0
+'''
+                bat """
+                "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-install.ps1 || exit /b 0
+                exit /b 0
+                """
+            }
+        }
+
+        // 4) npm - Frontend build
+        stage('npm - Frontend build') {
+            steps {
+                writeFile file: 'npm-build.ps1', text: '''
+$ErrorActionPreference = "Continue"
+Set-Location $env:WORKSPACE
+
+if (!(Test-Path "package.json")) { exit 0 }
+if (Test-Path ".npm_failed") { exit 0 }
+if (!(Test-Path "node_modules\\.bin")) { exit 0 }
+
+Write-Host "===== RUN PRODUCTION ====="
+cmd /c "npm run production"
+exit 0
+'''
+                bat """
+                "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-build.ps1 || exit /b 0
+                exit /b 0
+                """
+            }
+        }
+
+        // 5) SAST (Semgrep) - non bloquant
+        stage('SAST (Semgrep)') {
             steps {
                 bat """
                 @echo on
@@ -106,8 +174,8 @@ pipeline {
             }
         }
 
-        // SCA Composer (non-bloquant)
-        stage('Securite (SCA)') {
+        // 6) Securite (SCA - Composer) - non bloquant
+        stage('Securite (SCA - Composer)') {
             steps {
                 bat '''
                 @echo on
@@ -123,97 +191,30 @@ pipeline {
             }
         }
 
-        // npm install (non-bloquant, logs, force python, NEVER fail Jenkins)
-        stage('npm - Install deps') {
-          steps {
-            writeFile file: 'npm-install.ps1', text: '''
-        $ErrorActionPreference = "Continue"
-        Set-Location $env:WORKSPACE
-
-        if (!(Test-Path "package.json")) {
-          Write-Host "SKIP: package.json not found"
-          exit 0
-        }
-
-        Write-Host "===== NODE / NPM ====="
-        cmd /c "node -v"
-        cmd /c "npm -v"
-
-        $env:PYTHON = "C:\\Program Files\\Python312\\python.exe"
-        $env:npm_config_python = $env:PYTHON
-
-        if (Test-Path ".npm_failed") { Remove-Item ".npm_failed" -Force }
-
-        $log = Join-Path $env:WORKSPACE "npm-install.log"
-        if (Test-Path $log) { Remove-Item $log -Force }
-
-        if (Test-Path "package-lock.json") {
-          cmd /c "npm ci --no-fund --no-audit >> `"$log`" 2>&1"
-        } else {
-          cmd /c "npm install --no-fund --no-audit >> `"$log`" 2>&1"
-        }
-
-        if ($LASTEXITCODE -ne 0) {
-          Write-Host "WARNING: npm install failed -> frontend stages skipped"
-          New-Item -ItemType File -Path ".npm_failed" -Force | Out-Null
-        }
-
-        exit 0
-        '''
-            bat """
-            "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-install.ps1 || exit /b 0
-            exit /b 0
-            """
-          }
-        }
-
-        stage('npm - Frontend build') {
-          steps {
-            writeFile file: 'npm-build.ps1', text: '''
-        $ErrorActionPreference = "Continue"
-        Set-Location $env:WORKSPACE
-
-        if (!(Test-Path "package.json")) { exit 0 }
-        if (Test-Path ".npm_failed") { exit 0 }
-        if (!(Test-Path "node_modules\\.bin")) { exit 0 }
-
-        Write-Host "===== RUN PRODUCTION ====="
-        cmd /c "npm run production"
-        exit 0
-        '''
-            bat """
-            "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-build.ps1 || exit /b 0
-            exit /b 0
-            """
-          }
-        }
-
-        // npm audit (non-bloquant)
+        // 7) Securite (npm) - non bloquant
         stage('Securite (npm)') {
-          steps {
-            bat '''
-            @echo on
-            cd /d "%WORKSPACE%"
+            steps {
+                bat '''
+                @echo on
+                cd /d "%WORKSPACE%"
 
-            if not exist package.json exit /b 0
-            if exist .npm_failed exit /b 0
-            if not exist node_modules exit /b 0
+                if not exist package.json exit /b 0
+                if exist .npm_failed exit /b 0
+                if not exist node_modules exit /b 0
 
-            call npm audit --audit-level=high > npm-audit.txt
-            call npm audit --json > npm-audit.json
+                call npm audit --audit-level=high > npm-audit.txt
+                call npm audit --json > npm-audit.json
 
-            exit /b 0
-            '''
-          }
+                exit /b 0
+                '''
+            }
         }
 
-
-
-        // DAST (OWASP ZAP) - non-bloquant
+        // 8) DAST (OWASP ZAP) - non-bloquant
         stage('DAST (OWASP ZAP)') {
             steps {
                 bat """
-                @echo on 
+                @echo on
                 setlocal EnableExtensions
                 cd /d "%WORKSPACE%"
 
@@ -239,8 +240,18 @@ pipeline {
                 """
             }
         }
+
+        // 9) Archive artifacts (stage explicite, même si post le fait aussi)
+        stage('Archive artifacts') {
+            steps {
+                archiveArtifacts artifacts: 'composer-audit.txt, composer-audit.json, composer-cves.txt', allowEmptyArchive: true
+                archiveArtifacts artifacts: 'npm-audit.txt, npm-audit.json', allowEmptyArchive: true
+                archiveArtifacts artifacts: 'npm-install.log', allowEmptyArchive: true
+                archiveArtifacts artifacts: 'semgrep-report.json, semgrep-report.txt', allowEmptyArchive: true
+                archiveArtifacts artifacts: 'zap-backend.html, zap-frontend.html', allowEmptyArchive: true
+            }
+        }
     }
-        
 
     post {
         always {
@@ -249,16 +260,7 @@ pipeline {
                     junit testResults: 'build/reports/junit.xml', allowEmptyResults: true
                 }
             }
-
-            archiveArtifacts artifacts: 'build/reports/**', allowEmptyArchive: true
-            archiveArtifacts artifacts: 'composer-audit.txt, composer-audit.json, composer-cves.txt', allowEmptyArchive: true
-            archiveArtifacts artifacts: 'npm-audit.txt, npm-audit.json', allowEmptyArchive: true
-            archiveArtifacts artifacts: 'npm-install.log', allowEmptyArchive: true
-            archiveArtifacts artifacts: 'semgrep-report.json, semgrep-report.txt', allowEmptyArchive: true
-            archiveArtifacts artifacts: 'zap-backend.html, zap-frontend.html', allowEmptyArchive: true
-            archiveArtifacts artifacts: 'storage/logs/*.log', allowEmptyArchive: true
-
             cleanWs()
         }
     }
-    }
+}
