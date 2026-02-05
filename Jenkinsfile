@@ -1,187 +1,264 @@
-  pipeline {
-      agent any
+pipeline {
+    agent any
 
-      options { skipDefaultCheckout(true) }
+    options { skipDefaultCheckout(true) }
 
-      environment {
-          COMPOSER_NO_INTERACTION = "1"
-          COMPOSER_CACHE_DIR      = "${WORKSPACE}\\.composer-cache"
+    environment {
+        COMPOSER_NO_INTERACTION = "1"
+        COMPOSER_CACHE_DIR      = "${WORKSPACE}\\.composer-cache"
 
-          PY312   = "C:\\Program Files\\Python312\\python.exe"
-          SEMGREP = "C:\\Program Files\\Python312\\Scripts\\semgrep.exe"
-          PSH = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        // Forcer Python Windows (éviter MSYS2)
+        PY312   = "C:\\Program Files\\Python312\\python.exe"
 
-          ZAP_HOME = "C:\\Program Files\\ZAP\\Zed Attack Proxy"
+        // Semgrep exe (installé par pip dans Scripts)
+        SEMGREP = "C:\\Program Files\\Python312\\Scripts\\semgrep.exe"
 
-          BACKEND_URL  = "http://127.0.0.1:8000"
-          FRONTEND_URL = "http://127.0.0.1:5173"
+        // PowerShell full path
+        PSH = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
 
-          ZAP_PROXY_PORT = "18080"
-      }
+        // ZAP path (ton installation)
+        ZAP_HOME = "C:\\Program Files\\ZAP\\Zed Attack Proxy"
 
-      stages {
+        // Cibles DAST (adapte si besoin)
+        BACKEND_URL  = "http://127.0.0.1:8000"
+        FRONTEND_URL = "http://127.0.0.1:5173"
 
-          stage('Checkout') {
-              steps { checkout scm }
-          }
+        // IMPORTANT: Jenkins utilise 8080 => ZAP doit utiliser un autre port
+        ZAP_PROXY_PORT = "18080"
+    }
 
-          /* =========================
-            COMPOSER
-          ========================== */
-          stage('Dependances PHP (Composer)') {
-              steps {
-                  writeFile file: 'composer-install.cmd', text: (
-                      "@echo on\r\n" +
-                      "setlocal EnableExtensions\r\n" +
-                      "cd /d \"%WORKSPACE%\"\r\n" +
-                      "where php\r\n" +
-                      "where composer\r\n" +
-                      "php -v\r\n" +
-                      "call composer -V\r\n" +
-                      "if not exist \"%COMPOSER_CACHE_DIR%\" mkdir \"%COMPOSER_CACHE_DIR%\"\r\n" +
-                      "call composer install --no-interaction --prefer-dist --no-progress\r\n" +
-                      "set COMPOSER_EXIT=%ERRORLEVEL%\r\n" +
-                      "if not \"%COMPOSER_EXIT%\"==\"0\" exit /b %COMPOSER_EXIT%\r\n" +
-                      "if not exist \"vendor\\autoload.php\" exit /b 1\r\n" +
-                      "endlocal\r\n"
-                  )
+    stages {
 
-                  bat '''
-                  call composer-install.cmd
-                  if errorlevel 1 exit /b 1
-                  '''
-              }
-          }
+        stage('Checkout') {
+            steps { checkout scm }
+        }
 
-          /* =========================
-            SAST
-          ========================== */
-          stage('SAST (Semgrep)'){
-              steps {
-                  bat """
-                  "${env.PY312}" -m pip install --quiet --upgrade semgrep
-                  if exist "${env.SEMGREP}" (
-                    "${env.SEMGREP}" --config=auto --json --output semgrep-report.json
-                    "${env.SEMGREP}" --config=auto --output semgrep-report.txt
-                  )
-                  exit /b 0
-                  """
-              }
-          }
+        stage('Dependances PHP (Composer)') {
+            steps {
+                writeFile file: 'composer-install.cmd', text: (
+                    "@echo on\r\n" +
+                    "setlocal EnableExtensions\r\n" +
+                    "cd /d \"%WORKSPACE%\"\r\n" +
+                    "\r\n" +
+                    "echo ===== WHERE PHP/COMPOSER =====\r\n" +
+                    "where php\r\n" +
+                    "where composer\r\n" +
+                    "php -v\r\n" +
+                    "call composer -V\r\n" +
+                    "\r\n" +
+                    "echo ===== COMPOSER CACHE DIR =====\r\n" +
+                    "if not exist \"%COMPOSER_CACHE_DIR%\" mkdir \"%COMPOSER_CACHE_DIR%\"\r\n" +
+                    "\r\n" +
+                    "echo ===== RUN COMPOSER INSTALL =====\r\n" +
+                    "call composer install --no-interaction --prefer-dist --no-progress\r\n" +
+                    "set COMPOSER_EXIT=%ERRORLEVEL%\r\n" +
+                    "echo COMPOSER_EXIT=%COMPOSER_EXIT%\r\n" +
+                    "if not \"%COMPOSER_EXIT%\"==\"0\" exit /b %COMPOSER_EXIT%\r\n" +
+                    "\r\n" +
+                    "echo ===== CHECK VENDOR =====\r\n" +
+                    "if not exist \"vendor\\autoload.php\" (\r\n" +
+                    "  echo ERROR: vendor\\autoload.php introuvable apres composer install\r\n" +
+                    "  dir\r\n" +
+                    "  exit /b 1\r\n" +
+                    ")\r\n" +
+                    "echo ===== OK (vendor present) =====\r\n" +
+                    "endlocal\r\n"
+                )
 
-          /* =========================
-            SCA COMPOSER
-          ========================== */
-          stage('Securite (SCA)') {
-              steps {
-                  bat '''
-                  call composer audit --format=json > composer-audit.json
-                  call composer audit > composer-audit.txt
-                  exit /b 0
-                  '''
-              }
-          }
-
-          /* =========================
-            FRONTEND INSTALL (STABLE)
-          ========================== */
-          stage('npm - Install deps') {
-              steps {
-                writeFile file: 'npm-install.ps1', text: '''
-  $ErrorActionPreference = "Continue"
-  Set-Location $env:WORKSPACE
-
-  if (!(Test-Path "package.json")) { exit 0 }
-
-  cmd /c "node -v"
-  cmd /c "npm -v"
-
-  $env:PYTHON = "C:\\Program Files\\Python312\\python.exe"
-  $env:npm_config_python = $env:PYTHON
-
-  if (Test-Path ".npm_failed") { Remove-Item ".npm_failed" -Force }
-
-  $log = Join-Path $env:WORKSPACE "npm-install.log"
-  if (Test-Path $log) { Remove-Item $log -Force }
-
-  cmd /c "npm ci --no-fund --no-audit >> `"$log`" 2>&1"
-
-  if ($LASTEXITCODE -ne 0) {
-    New-Item -ItemType File -Path ".npm_failed" -Force | Out-Null
-  }
-
-  exit 0
-  '''
-                bat """
-                "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-install.ps1 || exit /b 0
-                exit /b 0
-                """
-              }
-          }
-
-          /* =========================
-            FRONTEND BUILD
-          ========================== */
-          stage('npm - Frontend build (Mix production)') {
-              steps {
-                writeFile file: 'npm-build.ps1', text: '''
-  $ErrorActionPreference = "Continue"
-  Set-Location $env:WORKSPACE
-
-  if (!(Test-Path "package.json")) { exit 0 }
-  if (Test-Path ".npm_failed") { exit 0 }
-  if (!(Test-Path "node_modules\\.bin")) { exit 0 }
-
-  cmd /c "npm run production"
-  exit 0
-  '''
-                bat """
-                "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-build.ps1 || exit /b 0
-                exit /b 0
-                """
-              }
-          }
-
-          /* =========================
-            NPM AUDIT
-          ========================== */
-          stage('Securite (npm)') {
-              steps {
                 bat '''
-                if not exist package.json exit /b 0
-                if exist .npm_failed exit /b 0
-                if not exist node_modules exit /b 0
+                @echo on
+                echo ===== RUN composer-install.cmd =====
+                call composer-install.cmd
+                if errorlevel 1 exit /b 1
+                '''
+            }
+        }
 
-                call npm audit --audit-level=high > npm-audit.txt
-                call npm audit --json > npm-audit.json
+        // SAST (Semgrep) - non bloquant
+        stage('SAST (Semgrep)'){
+            steps {
+                bat """
+                @echo on
+                chcp 65001 >nul
+                set PYTHONUTF8=1
+                set PYTHONIOENCODING=utf-8
+
+                echo ===== PYTHON CHECK (FORCED PATH) =====
+                "${env.PY312}" --version
+                "${env.PY312}" -m pip --version
+
+                echo ===== INSTALL/UPDATE SEMGREP =====
+                "${env.PY312}" -m pip install --quiet --upgrade semgrep
+
+                echo ===== CHECK SEMGREP EXE =====
+                if not exist "${env.SEMGREP}" (
+                  echo ERROR: semgrep.exe introuvable: ${env.SEMGREP}
+                  dir "C:\\Program Files\\Python312\\Scripts"
+                  exit /b 0
+                )
+
+                echo ===== RUN SEMGREP (non-bloquant) =====
+                "${env.SEMGREP}" --config=auto --json --output semgrep-report.json
+                "${env.SEMGREP}" --config=auto --output semgrep-report.txt
+
+                exit /b 0
+                """
+            }
+        }
+
+        // SCA Composer (non-bloquant)
+        stage('Securite (SCA)') {
+            steps {
+                bat '''
+                @echo on
+                cd /d "%WORKSPACE%"
+
+                call composer audit --format=json > composer-audit.json
+                call composer audit > composer-audit.txt
+
+                findstr /I /R "CVE-[0-9][0-9][0-9][0-9]-[0-9]" composer-audit.txt > composer-cves.txt
 
                 exit /b 0
                 '''
-              }
-          }
+            }
+        }
 
-          /* =========================
-            DAST
-          ========================== */
-          stage('DAST (OWASP ZAP)') {
-              steps {
-                  bat """
-                  set "ZAP=${env.ZAP_HOME}\\zap.bat"
-                  call "%ZAP%" -cmd -quickurl "${env.BACKEND_URL}" ^
-                      -quickout "%WORKSPACE%\\zap-backend.html"
-                  exit /b 0
-                  """
-              }
-          }
-      }
+        // npm install (non-bloquant, logs, force python, NEVER fail Jenkins)
+        stage('npm - Install deps') {
+          steps {
+            writeFile file: 'npm-install.ps1', text: '''
+        $ErrorActionPreference = "Continue"
+        Set-Location $env:WORKSPACE
 
-      post {
-          always {
-              archiveArtifacts artifacts: 'npm-install.log', allowEmptyArchive: true
-              archiveArtifacts artifacts: 'npm-audit.txt, npm-audit.json', allowEmptyArchive: true
-              archiveArtifacts artifacts: 'semgrep-report.json, semgrep-report.txt', allowEmptyArchive: true
-              archiveArtifacts artifacts: 'zap-backend.html', allowEmptyArchive: true
-              cleanWs()
+        if (!(Test-Path "package.json")) {
+          Write-Host "SKIP: package.json not found"
+          exit 0
+        }
+
+        Write-Host "===== NODE / NPM ====="
+        cmd /c "node -v"
+        cmd /c "npm -v"
+
+        $env:PYTHON = "C:\\Program Files\\Python312\\python.exe"
+        $env:npm_config_python = $env:PYTHON
+
+        if (Test-Path ".npm_failed") { Remove-Item ".npm_failed" -Force }
+
+        $log = Join-Path $env:WORKSPACE "npm-install.log"
+        if (Test-Path $log) { Remove-Item $log -Force }
+
+        if (Test-Path "package-lock.json") {
+          cmd /c "npm ci --no-fund --no-audit >> `"$log`" 2>&1"
+        } else {
+          cmd /c "npm install --no-fund --no-audit >> `"$log`" 2>&1"
+        }
+
+        if ($LASTEXITCODE -ne 0) {
+          Write-Host "WARNING: npm install failed -> frontend stages skipped"
+          New-Item -ItemType File -Path ".npm_failed" -Force | Out-Null
+        }
+
+        exit 0
+        '''
+            bat """
+            "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-install.ps1 || exit /b 0
+            exit /b 0
+            """
           }
-      }
-  }
+        }
+
+        stage('npm - Frontend build') {
+          steps {
+            writeFile file: 'npm-build.ps1', text: '''
+        $ErrorActionPreference = "Continue"
+        Set-Location $env:WORKSPACE
+
+        if (!(Test-Path "package.json")) { exit 0 }
+        if (Test-Path ".npm_failed") { exit 0 }
+        if (!(Test-Path "node_modules\\.bin")) { exit 0 }
+
+        Write-Host "===== RUN PRODUCTION ====="
+        cmd /c "npm run production"
+        exit 0
+        '''
+            bat """
+            "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-build.ps1 || exit /b 0
+            exit /b 0
+            """
+          }
+        }
+
+        // npm audit (non-bloquant)
+        stage('Securite (npm)') {
+          steps {
+            bat '''
+            @echo on
+            cd /d "%WORKSPACE%"
+
+            if not exist package.json exit /b 0
+            if exist .npm_failed exit /b 0
+            if not exist node_modules exit /b 0
+
+            call npm audit --audit-level=high > npm-audit.txt
+            call npm audit --json > npm-audit.json
+
+            exit /b 0
+            '''
+          }
+        }
+
+
+
+        // DAST (OWASP ZAP) - non-bloquant
+        stage('DAST (OWASP ZAP)') {
+            steps {
+                bat """
+                @echo on 
+                setlocal EnableExtensions
+                cd /d "%WORKSPACE%"
+
+                set "ZAP=${env.ZAP_HOME}\\zap.bat"
+                set "ZAP_WORK=%WORKSPACE%\\zap-work"
+
+                taskkill /F /IM ZAP.exe >nul 2>&1
+                taskkill /F /IM zap.exe >nul 2>&1
+
+                if not exist "%ZAP_WORK%" mkdir "%ZAP_WORK%"
+                cd /d "${env.ZAP_HOME}"
+
+                call "%ZAP%" -cmd -dir "%ZAP_WORK%" -port ${env.ZAP_PROXY_PORT} ^
+                  -quickurl "${env.BACKEND_URL}" ^
+                  -quickout "%WORKSPACE%\\zap-backend.html"
+
+                call "%ZAP%" -cmd -dir "%ZAP_WORK%" -port ${env.ZAP_PROXY_PORT} ^
+                  -quickurl "${env.FRONTEND_URL}" ^
+                  -quickout "%WORKSPACE%\\zap-frontend.html"
+
+                dir "%WORKSPACE%\\zap-*.html"
+                exit /b 0
+                """
+            }
+        }
+    }
+        
+
+    post {
+        always {
+            script {
+                if (fileExists('build/reports/junit.xml')) {
+                    junit testResults: 'build/reports/junit.xml', allowEmptyResults: true
+                }
+            }
+
+            archiveArtifacts artifacts: 'build/reports/**', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'composer-audit.txt, composer-audit.json, composer-cves.txt', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'npm-audit.txt, npm-audit.json', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'npm-install.log', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'semgrep-report.json, semgrep-report.txt', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'zap-backend.html, zap-frontend.html', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'storage/logs/*.log', allowEmptyArchive: true
+
+            cleanWs()
+        }
+    }
+    }
