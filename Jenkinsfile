@@ -80,39 +80,39 @@ pipeline {
         stage('npm - Install deps') {
             steps {
                 writeFile file: 'npm-install.ps1', text: '''
-$ErrorActionPreference = "Continue"
-Set-Location $env:WORKSPACE
+                $ErrorActionPreference = "Continue"
+                Set-Location $env:WORKSPACE
 
-if (!(Test-Path "package.json")) {
-  Write-Host "SKIP: package.json not found"
-  exit 0
-}
+                if (!(Test-Path "package.json")) {
+                Write-Host "SKIP: package.json not found"
+                exit 0
+                }
 
-Write-Host "===== NODE / NPM ====="
-cmd /c "node -v"
-cmd /c "npm -v"
+                Write-Host "===== NODE / NPM ====="
+                cmd /c "node -v"
+                cmd /c "npm -v"
 
-$env:PYTHON = "C:\\Program Files\\Python312\\python.exe"
-$env:npm_config_python = $env:PYTHON
+                $env:PYTHON = "C:\\Program Files\\Python312\\python.exe"
+                $env:npm_config_python = $env:PYTHON
 
-if (Test-Path ".npm_failed") { Remove-Item ".npm_failed" -Force }
+                if (Test-Path ".npm_failed") { Remove-Item ".npm_failed" -Force }
 
-$log = Join-Path $env:WORKSPACE "npm-install.log"
-if (Test-Path $log) { Remove-Item $log -Force }
+                $log = Join-Path $env:WORKSPACE "npm-install.log"
+                if (Test-Path $log) { Remove-Item $log -Force }
 
-if (Test-Path "package-lock.json") {
-  cmd /c "npm ci --no-fund --no-audit >> `"$log`" 2>&1"
-} else {
-  cmd /c "npm install --no-fund --no-audit >> `"$log`" 2>&1"
-}
+                if (Test-Path "package-lock.json") {
+                cmd /c "npm ci --no-fund --no-audit >> `"$log`" 2>&1"
+                } else {
+                cmd /c "npm install --no-fund --no-audit >> `"$log`" 2>&1"
+                }
 
-if ($LASTEXITCODE -ne 0) {
-  Write-Host "WARNING: npm install failed -> frontend stages skipped"
-  New-Item -ItemType File -Path ".npm_failed" -Force | Out-Null
-}
+                if ($LASTEXITCODE -ne 0) {
+                Write-Host "WARNING: npm install failed -> frontend stages skipped"
+                New-Item -ItemType File -Path ".npm_failed" -Force | Out-Null
+                }
 
-exit 0
-'''
+                exit 0
+                '''
                 bat """
                 "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-install.ps1 || exit /b 0
                 exit /b 0
@@ -124,17 +124,17 @@ exit 0
         stage('npm - Frontend build') {
             steps {
                 writeFile file: 'npm-build.ps1', text: '''
-$ErrorActionPreference = "Continue"
-Set-Location $env:WORKSPACE
+                $ErrorActionPreference = "Continue"
+                Set-Location $env:WORKSPACE
 
-if (!(Test-Path "package.json")) { exit 0 }
-if (Test-Path ".npm_failed") { exit 0 }
-if (!(Test-Path "node_modules\\.bin")) { exit 0 }
+                if (!(Test-Path "package.json")) { exit 0 }
+                if (Test-Path ".npm_failed") { exit 0 }
+                if (!(Test-Path "node_modules\\.bin")) { exit 0 }
 
-Write-Host "===== RUN PRODUCTION ====="
-cmd /c "npm run production"
-exit 0
-'''
+                Write-Host "===== RUN PRODUCTION ====="
+                cmd /c "npm run production"
+                exit 0
+                '''
                 bat """
                 "${env.PSH}" -NoProfile -ExecutionPolicy Bypass -File npm-build.ps1 || exit /b 0
                 exit /b 0
@@ -241,7 +241,8 @@ exit 0
             }
         }
 
-        // 9) Archive artifacts (stage explicite, même si post le fait aussi)
+        // 9) Archive artifacts , Conserver les fichiers importants produits par la pipeline après l’exécution
+        // allowEmptyArchive: true , autorise Jenkins à continuer même s’il n’y a aucun artifact à archiver 
         stage('Archive artifacts') {
             steps {
                 archiveArtifacts artifacts: 'composer-audit.txt, composer-audit.json, composer-cves.txt', allowEmptyArchive: true
